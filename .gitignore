@@ -1,0 +1,14 @@
+# Toolchains and third-party trees (see docs/BUILDING.md)
+/toolchain/
+/goroot/
+/goroot-*/
+/ref/
+
+# Build output, caches and scratch space
+/out/
+/scratch/
+/.gotmp/
+/.gocache/
+
+# Local working notes
+/NOTES.md

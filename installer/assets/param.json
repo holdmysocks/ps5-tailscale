@@ -1,0 +1,11 @@
+{
+    "titleId": "TSCL00001",
+    "applicationCategoryType": 65536,
+    "deeplinkUri": "http://127.0.0.1:8090/",
+    "localizedParameters": {
+        "defaultLanguage": "en-US",
+        "en-US": {
+            "titleName": "Tailscale"
+        }
+    }
+}

@@ -1,0 +1,926 @@
+diff --git a/src/internal/platform/supported.go b/src/internal/platform/supported.go
+index 6f37e36..f23af91 100644
+--- a/src/internal/platform/supported.go
++++ b/src/internal/platform/supported.go
+@@ -218,6 +218,7 @@ func InternalLinkPIESupported(goos, goarch string) bool {
+ 	switch goos + "/" + goarch {
+ 	case "android/arm64",
+ 		"darwin/amd64", "darwin/arm64",
++		"freebsd/amd64", // PS5: payloads are loaded at an arbitrary address by our own loader
+ 		"linux/amd64", "linux/arm64", "linux/loong64", "linux/ppc64", "linux/ppc64le", "linux/s390x",
+ 		"windows/386", "windows/amd64", "windows/arm64":
+ 		return true
+diff --git a/src/runtime/defs_freebsd_amd64.go b/src/runtime/defs_freebsd_amd64.go
+index 8f0b08d..9d3ac79 100644
+--- a/src/runtime/defs_freebsd_amd64.go
++++ b/src/runtime/defs_freebsd_amd64.go
+@@ -205,6 +205,7 @@ type mcontext struct {
+ 
+ type ucontext struct {
+ 	uc_sigmask  sigset
++	ps5_pad     [48]byte // PS5: the kernel has extra fields before the machine context
+ 	uc_mcontext mcontext
+ 	uc_link     *ucontext
+ 	uc_stack    stackt
+@@ -251,7 +252,7 @@ type keventt struct {
+ 	fflags uint32
+ 	data   int64
+ 	udata  *byte
+-	ext    [4]uint64
++	// PS5: no ext field. The kernel only has the 32 byte kevent of FreeBSD 11 and earlier.
+ }
+ 
+ type bintime struct {
+diff --git a/src/runtime/sys_freebsd_amd64.s b/src/runtime/sys_freebsd_amd64.s
+index 977ea09..9b675ba 100644
+--- a/src/runtime/sys_freebsd_amd64.s
++++ b/src/runtime/sys_freebsd_amd64.s
+@@ -43,8 +43,10 @@
+ #define SYS_thr_new		455
+ #define SYS_mmap		477
+ #define SYS_cpuset_getaffinity	487
+-#define SYS_pipe2 		542
+-#define SYS_kevent		560
++// PS5: syscall numbers from 532 up belong to Sony, so pipe2 (542) and the
++// FreeBSD 12 kevent (560) are replaced by their older equivalents.
++#define SYS_pipe		42
++#define SYS_kevent		363
+ 
+ TEXT runtime·sys_umtx_op(SB),NOSPLIT,$0
+ 	MOVQ addr+0(FP), DI
+@@ -137,15 +139,21 @@ TEXT runtime·read(SB),NOSPLIT,$-8
+ 	MOVL	AX, ret+24(FP)
+ 	RET
+ 
+-// func pipe2(flags int32) (r, w int32, errno int32)
+-TEXT runtime·pipe2(SB),NOSPLIT,$0-20
+-	LEAQ	r+8(FP), DI
+-	MOVL	flags+0(FP), SI
+-	MOVL	$SYS_pipe2, AX
++// func pipe() (r, w int32, errno int32)
++// The two descriptors come back in AX and DX.
++TEXT runtime·pipe(SB),NOSPLIT,$0-12
++	MOVL	$SYS_pipe, AX
+ 	SYSCALL
+-	JCC	2(PC)
++	JCC	pipeok
+ 	NEGQ	AX
+-	MOVL	AX, errno+16(FP)
++	MOVL	$-1, r+0(FP)
++	MOVL	$-1, w+4(FP)
++	MOVL	AX, errno+8(FP)
++	RET
++pipeok:
++	MOVL	AX, r+0(FP)
++	MOVL	DX, w+4(FP)
++	MOVL	$0, errno+8(FP)
+ 	RET
+ 
+ TEXT runtime·write1(SB),NOSPLIT,$-8
+diff --git a/src/runtime/os_freebsd.go b/src/runtime/os_freebsd.go
+index 68d895b..efa6b32 100644
+--- a/src/runtime/os_freebsd.go
++++ b/src/runtime/os_freebsd.go
+@@ -49,9 +49,33 @@ func kqueue() int32
+ //go:noescape
+ func kevent(kq int32, ch *keventt, nch int32, ev *keventt, nev int32, ts *timespec) int32
+ 
+-func pipe2(flags int32) (r, w int32, errno int32)
++func pipe() (r, w int32, errno int32)
+ func fcntl(fd, cmd, arg int32) (ret int32, errno int32)
+ 
++// pipe2 is not implemented by the PS5 kernel, so build it from pipe and fcntl.
++func pipe2(flags int32) (r, w int32, errno int32) {
++	const (
++		_F_GETFL = 3
++		_F_SETFL = 4
++	)
++	r, w, errno = pipe()
++	if errno != 0 {
++		return -1, -1, errno
++	}
++	if flags&_O_CLOEXEC != 0 {
++		closeonexec(r)
++		closeonexec(w)
++	}
++	if flags&_O_NONBLOCK != 0 {
++		for _, fd := range [2]int32{r, w} {
++			if fl, e := fcntl(fd, _F_GETFL, 0); e == 0 {
++				fcntl(fd, _F_SETFL, fl|_O_NONBLOCK)
++			}
++		}
++	}
++	return r, w, 0
++}
++
+ func issetugid() int32
+ 
+ // From FreeBSD's <sys/sysctl.h>
+@@ -108,14 +132,15 @@ func getCPUCount() int32 {
+ 	// with dynamically assigned sysctl entries.
+ 	miblen := sysctlnametomib([]byte("kern.smp.maxcpus"), &mib)
+ 	if miblen == 0 {
+-		return 1
++		// PS5: kern.smp.maxcpus does not exist.
++		return getCPUCountHW()
+ 	}
+ 
+ 	// Query kern.smp.maxcpus.
+ 	dstsize := uintptr(4)
+ 	maxcpus := uint32(0)
+ 	if sysctl(&mib[0], miblen, (*byte)(unsafe.Pointer(&maxcpus)), &dstsize, nil, 0) != 0 {
+-		return 1
++		return getCPUCountHW()
+ 	}
+ 
+ 	maskSize := int(maxcpus+7) / 8
+@@ -128,7 +153,7 @@ func getCPUCount() int32 {
+ 
+ 	if cpuset_getaffinity(_CPU_LEVEL_WHICH, _CPU_WHICH_PID, _CPU_CURRENT_PID,
+ 		maskSize, (*byte)(unsafe.Pointer(&mask[0]))) != 0 {
+-		return 1
++		return getCPUCountHW()
+ 	}
+ 	n := int32(0)
+ 	for _, v := range mask[:maskSize] {
+@@ -143,6 +168,18 @@ func getCPUCount() int32 {
+ 	return n
+ }
+ 
++// getCPUCountHW reads hw.ncpu. It is the PS5 fallback for getCPUCount.
++func getCPUCountHW() int32 {
++	const _HW_NCPU = 3
++	mib := [2]uint32{_CTL_HW, _HW_NCPU}
++	out := uint32(0)
++	nout := unsafe.Sizeof(out)
++	if sysctl(&mib[0], 2, (*byte)(unsafe.Pointer(&out)), &nout, nil, 0) >= 0 && out > 0 {
++		return int32(out)
++	}
++	return 1
++}
++
+ func getPageSize() uintptr {
+ 	mib := [2]uint32{_CTL_HW, _HW_PAGESIZE}
+ 	out := uint32(0)
+diff --git a/src/syscall/asm_unix_amd64.s b/src/syscall/asm_unix_amd64.s
+index 6d8da71..5f44736 100644
+--- a/src/syscall/asm_unix_amd64.s
++++ b/src/syscall/asm_unix_amd64.s
+@@ -11,11 +11,74 @@
+ // System call support for AMD64 unixes
+ //
+ 
++// PS5: the kernel implements the FreeBSD 9 syscall table. Numbers from 532 up
++// are Sony syscalls with unrelated meanings, so they must never reach the
++// kernel. The exported entry points below hand those numbers, plus socket (97)
++// and socketpair (135) whose SOCK_NONBLOCK/SOCK_CLOEXEC type flags need
++// translating, to the emulation in ps5_freebsd_amd64.go. Everything else goes
++// straight to the unchanged implementations, renamed to sysDirect*.
++
++#define PS5_FIRST_SONY_SYSCALL	532
++#define PS5_SYS_SOCKET		97
++#define PS5_SYS_SOCKETPAIR	135
++
+ // func Syscall(trap int64, a1, a2, a3 int64) (r1, r2, err int64)
++TEXT	·Syscall(SB),NOSPLIT,$0-56
++	MOVQ	trap+0(FP), AX
++	CMPQ	AX, $PS5_FIRST_SONY_SYSCALL
++	JAE	emulate
++	CMPQ	AX, $PS5_SYS_SOCKET
++	JEQ	emulate
++	CMPQ	AX, $PS5_SYS_SOCKETPAIR
++	JEQ	emulate
++	JMP	·sysDirect(SB)
++emulate:
++	JMP	·ps5Syscall(SB)
++
+ // func Syscall6(trap int64, a1, a2, a3, a4, a5, a6 int64) (r1, r2, err int64)
++TEXT	·Syscall6(SB),NOSPLIT,$0-80
++	MOVQ	trap+0(FP), AX
++	CMPQ	AX, $PS5_FIRST_SONY_SYSCALL
++	JAE	emulate6
++	CMPQ	AX, $PS5_SYS_SOCKET
++	JEQ	emulate6
++	CMPQ	AX, $PS5_SYS_SOCKETPAIR
++	JEQ	emulate6
++	JMP	·sysDirect6(SB)
++emulate6:
++	JMP	·ps5Syscall6(SB)
++
++// func RawSyscall(trap int64, a1, a2, a3 int64) (r1, r2, err int64)
++TEXT	·RawSyscall(SB),NOSPLIT,$0-56
++	MOVQ	trap+0(FP), AX
++	CMPQ	AX, $PS5_FIRST_SONY_SYSCALL
++	JAE	emulateraw
++	CMPQ	AX, $PS5_SYS_SOCKET
++	JEQ	emulateraw
++	CMPQ	AX, $PS5_SYS_SOCKETPAIR
++	JEQ	emulateraw
++	JMP	·rawSysDirect(SB)
++emulateraw:
++	JMP	·ps5RawSyscall(SB)
++
++// func RawSyscall6(trap int64, a1, a2, a3, a4, a5, a6 int64) (r1, r2, err int64)
++TEXT	·RawSyscall6(SB),NOSPLIT,$0-80
++	MOVQ	trap+0(FP), AX
++	CMPQ	AX, $PS5_FIRST_SONY_SYSCALL
++	JAE	emulateraw6
++	CMPQ	AX, $PS5_SYS_SOCKET
++	JEQ	emulateraw6
++	CMPQ	AX, $PS5_SYS_SOCKETPAIR
++	JEQ	emulateraw6
++	JMP	·rawSysDirect6(SB)
++emulateraw6:
++	JMP	·ps5RawSyscall6(SB)
++
++// func sysDirect(trap int64, a1, a2, a3 int64) (r1, r2, err int64)
++// func sysDirect6(trap int64, a1, a2, a3, a4, a5, a6 int64) (r1, r2, err int64)
+ // Trap # in AX, args in DI SI DX, return in AX DX
+ 
+-TEXT	·Syscall(SB),NOSPLIT,$0-56
++TEXT	·sysDirect(SB),NOSPLIT,$0-56
+ 	CALL	runtime·entersyscall<ABIInternal>(SB)
+ 	MOVQ	trap+0(FP), AX	// syscall entry
+ 	MOVQ	a1+8(FP), DI
+@@ -35,7 +98,7 @@ ok:
+ 	CALL	runtime·exitsyscall<ABIInternal>(SB)
+ 	RET
+ 
+-TEXT	·Syscall6(SB),NOSPLIT,$0-80
++TEXT	·sysDirect6(SB),NOSPLIT,$0-80
+ 	CALL	runtime·entersyscall<ABIInternal>(SB)
+ 	MOVQ	trap+0(FP), AX	// syscall entry
+ 	MOVQ	a1+8(FP), DI
+@@ -58,7 +121,7 @@ ok6:
+ 	CALL	runtime·exitsyscall<ABIInternal>(SB)
+ 	RET
+ 
+-TEXT	·RawSyscall(SB),NOSPLIT,$0-56
++TEXT	·rawSysDirect(SB),NOSPLIT,$0-56
+ 	MOVQ	a1+8(FP), DI
+ 	MOVQ	a2+16(FP), SI
+ 	MOVQ	a3+24(FP), DX
+@@ -75,7 +138,7 @@ ok1:
+ 	MOVQ	$0, err+48(FP)	// errno
+ 	RET
+ 
+-TEXT	·RawSyscall6(SB),NOSPLIT,$0-80
++TEXT	·rawSysDirect6(SB),NOSPLIT,$0-80
+ 	MOVQ	a1+8(FP), DI
+ 	MOVQ	a2+16(FP), SI
+ 	MOVQ	a3+24(FP), DX
+diff --git a/src/syscall/asm9_unix2_amd64.s b/src/syscall/asm9_unix2_amd64.s
+index bb4e9db..5316f1f 100644
+--- a/src/syscall/asm9_unix2_amd64.s
++++ b/src/syscall/asm9_unix2_amd64.s
+@@ -11,8 +11,23 @@
+ // Syscall9 support for AMD64, DragonFly, FreeBSD and NetBSD
+ //
+ 
++// PS5: see asm_unix_amd64.s. Sony's syscall numbers are diverted to the
++// emulation, the rest go to the unchanged implementation.
+ // func Syscall9(trap int64, a1, a2, a3, a4, a5, a6, a7, a8, a9 int64) (r1, r2, err int64);
+-TEXT	·Syscall9(SB),NOSPLIT,$32-104
++TEXT	·Syscall9(SB),NOSPLIT,$0-104
++	MOVQ	num+0(FP), AX
++	CMPQ	AX, $532
++	JAE	emulate9
++	CMPQ	AX, $97
++	JEQ	emulate9
++	CMPQ	AX, $135
++	JEQ	emulate9
++	JMP	·sysDirect9(SB)
++emulate9:
++	JMP	·ps5Syscall9(SB)
++
++// func sysDirect9(trap int64, a1, a2, a3, a4, a5, a6, a7, a8, a9 int64) (r1, r2, err int64);
++TEXT	·sysDirect9(SB),NOSPLIT,$32-104
+ 	NO_LOCAL_POINTERS
+ 	CALL	runtime·entersyscall<ABIInternal>(SB)
+ 	MOVQ	num+0(FP), AX	// syscall entry
+diff --git a/src/syscall/ps5_freebsd_amd64.go b/src/syscall/ps5_freebsd_amd64.go
+new file mode 100644
+index 0000000..c369a88
+--- /dev/null
++++ b/src/syscall/ps5_freebsd_amd64.go
+@@ -0,0 +1,575 @@
++// This file is part of the PS5 patch for Go from the ps5-tailscale project.
++// Like the rest of the patch it is distributed under Go's BSD-style license,
++// which can be found in the LICENSE file.
++
++// PS5 support.
++//
++// The PS5 kernel implements the FreeBSD 9 system call table. Every number from
++// 532 up is a Sony system call with an unrelated meaning, so the calls FreeBSD
++// added in releases 10 to 13 (pipe2, accept4, the 64-bit inode stat family, the
++// extended kevent, getrandom, ...) do not exist. The assembly entry points
++// Syscall, Syscall6, RawSyscall, RawSyscall6 and Syscall9 divert those numbers
++// here, where they are rebuilt from the older calls. Because golang.org/x/sys
++// and internal/syscall/unix funnel through the same entry points, this covers
++// them too.
++//
++// socket and socketpair are diverted as well: the SOCK_NONBLOCK and
++// SOCK_CLOEXEC type flags postdate FreeBSD 9, so they are applied with fcntl.
++
++package syscall
++
++import (
++	"runtime"
++	"sync"
++	"unsafe"
++)
++
++func sysDirect(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err Errno)
++func sysDirect6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err Errno)
++func sysDirect9(trap, a1, a2, a3, a4, a5, a6, a7, a8, a9 uintptr) (r1, r2 uintptr, err Errno)
++func rawSysDirect(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err Errno)
++func rawSysDirect6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err Errno)
++
++func ps5Syscall(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err Errno) {
++	return ps5Emulate(sysDirect6, trap, a1, a2, a3, 0, 0, 0)
++}
++
++func ps5Syscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err Errno) {
++	return ps5Emulate(sysDirect6, trap, a1, a2, a3, a4, a5, a6)
++}
++
++func ps5Syscall9(trap, a1, a2, a3, a4, a5, a6, a7, a8, a9 uintptr) (r1, r2 uintptr, err Errno) {
++	return ps5Emulate(sysDirect6, trap, a1, a2, a3, a4, a5, a6)
++}
++
++func ps5RawSyscall(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err Errno) {
++	return ps5Emulate(rawSysDirect6, trap, a1, a2, a3, 0, 0, 0)
++}
++
++func ps5RawSyscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err Errno) {
++	return ps5Emulate(rawSysDirect6, trap, a1, a2, a3, a4, a5, a6)
++}
++
++// Syscall numbers of the FreeBSD 9 calls the emulation is built from.
++const (
++	ps5SysAccept        = 30
++	ps5SysPipe          = 42
++	ps5SysFsync         = 95
++	ps5SysSocket        = 97
++	ps5SysSocketpair    = 135
++	ps5SysUtimes        = 138
++	ps5SysStat          = 188
++	ps5SysFstat         = 189
++	ps5SysLstat         = 190
++	ps5SysGetdirentries = 196
++	ps5SysSysctl        = 202
++	ps5SysFutimes       = 206
++	ps5SysPoll          = 209
++	ps5SysClockGettime  = 232
++	ps5SysLutimes       = 276
++	ps5SysKevent        = 363
++	ps5SysStatfs        = 396
++	ps5SysFstatfs       = 397
++	ps5SysLseek         = 478
++	ps5SysFstatat       = 493
++	ps5SysFutimesat     = 494
++	ps5SysMknodat       = 498
++)
++
++// Syscall numbers that do not exist on the PS5 and are emulated.
++const (
++	ps5NewAccept4       = 541
++	ps5NewPipe2         = 542
++	ps5NewPpoll         = 545
++	ps5NewFutimens      = 546
++	ps5NewUtimensat     = 547
++	ps5NewFdatasync     = 550
++	ps5NewFstat         = 551
++	ps5NewFstatat       = 552
++	ps5NewGetdirentries = 554
++	ps5NewStatfs        = 555
++	ps5NewFstatfs       = 556
++	ps5NewMknodat       = 559
++	ps5NewKevent        = 560
++	ps5NewGetrandom     = 563
++)
++
++const (
++	ps5SockCloexec  = 0x10000000
++	ps5SockNonblock = 0x20000000
++	ps5AtFdcwd      = -100
++	ps5AtNofollow   = 0x200
++	ps5UtimeNow     = -1
++	ps5UtimeOmit    = -2
++)
++
++type ps5Call func(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err Errno)
++
++func ps5Emulate(call ps5Call, trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err Errno) {
++	switch trap {
++	case ps5SysSocket:
++		flags := a2 & (ps5SockCloexec | ps5SockNonblock)
++		r1, r2, err = call(ps5SysSocket, a1, a2&^flags, a3, 0, 0, 0)
++		if err == 0 {
++			ps5SetFdFlags(r1, flags&ps5SockCloexec != 0, flags&ps5SockNonblock != 0)
++		}
++		return
++
++	case ps5SysSocketpair:
++		flags := a2 & (ps5SockCloexec | ps5SockNonblock)
++		r1, r2, err = call(ps5SysSocketpair, a1, a2&^flags, a3, a4, 0, 0)
++		if err == 0 && flags != 0 {
++			fds := (*[2]int32)(unsafe.Pointer(a4))
++			ps5SetFdFlags(uintptr(fds[0]), flags&ps5SockCloexec != 0, flags&ps5SockNonblock != 0)
++			ps5SetFdFlags(uintptr(fds[1]), flags&ps5SockCloexec != 0, flags&ps5SockNonblock != 0)
++		}
++		return
++
++	case ps5NewAccept4:
++		r1, r2, err = call(ps5SysAccept, a1, a2, a3, 0, 0, 0)
++		if err == 0 {
++			ps5SetFdFlags(r1, a4&ps5SockCloexec != 0, a4&ps5SockNonblock != 0)
++		}
++		return
++
++	case ps5NewPipe2:
++		// pipe returns the two descriptors in the result registers.
++		r1, r2, err = call(ps5SysPipe, 0, 0, 0, 0, 0, 0)
++		if err != 0 {
++			return
++		}
++		fds := (*[2]int32)(unsafe.Pointer(a1))
++		fds[0], fds[1] = int32(r1), int32(r2)
++		ps5SetFdFlags(r1, a2&O_CLOEXEC != 0, a2&O_NONBLOCK != 0)
++		ps5SetFdFlags(r2, a2&O_CLOEXEC != 0, a2&O_NONBLOCK != 0)
++		return 0, 0, 0
++
++	case ps5NewPpoll:
++		timeout := -1
++		if a3 != 0 {
++			ts := (*Timespec)(unsafe.Pointer(a3))
++			timeout = int(ts.Sec*1000 + (ts.Nsec+999999)/1000000)
++		}
++		return call(ps5SysPoll, a1, a2, uintptr(timeout), 0, 0, 0)
++
++	case ps5NewFutimens:
++		tv, omit, e := ps5Timevals(a2, func(st *ps5Stat) Errno {
++			_, _, e := rawSysDirect(ps5SysFstat, a1, uintptr(unsafe.Pointer(st)), 0)
++			return e
++		})
++		if e != 0 || omit {
++			return ps5Result(e)
++		}
++		r1, r2, err = call(ps5SysFutimes, a1, uintptr(unsafe.Pointer(tv)), 0, 0, 0, 0)
++		runtime.KeepAlive(tv)
++		return
++
++	case ps5NewUtimensat:
++		tv, omit, e := ps5Timevals(a3, func(st *ps5Stat) Errno {
++			_, _, e := rawSysDirect6(ps5SysFstatat, a1, a2, uintptr(unsafe.Pointer(st)), a4&ps5AtNofollow, 0, 0)
++			return e
++		})
++		if e != 0 || omit {
++			return ps5Result(e)
++		}
++		switch {
++		case a4&ps5AtNofollow != 0:
++			r1, r2, err = call(ps5SysLutimes, a2, uintptr(unsafe.Pointer(tv)), 0, 0, 0, 0)
++		case int32(a1) == ps5AtFdcwd:
++			r1, r2, err = call(ps5SysUtimes, a2, uintptr(unsafe.Pointer(tv)), 0, 0, 0, 0)
++		default:
++			r1, r2, err = call(ps5SysFutimesat, a1, a2, uintptr(unsafe.Pointer(tv)), 0, 0, 0)
++		}
++		runtime.KeepAlive(tv)
++		return
++
++	case ps5NewFdatasync:
++		return call(ps5SysFsync, a1, 0, 0, 0, 0, 0)
++
++	case ps5NewFstat:
++		var st ps5Stat
++		r1, r2, err = call(ps5SysFstat, a1, uintptr(unsafe.Pointer(&st)), 0, 0, 0, 0)
++		if err == 0 {
++			st.convert((*Stat_t)(unsafe.Pointer(a2)))
++		}
++		return
++
++	case ps5NewFstatat:
++		var st ps5Stat
++		r1, r2, err = call(ps5SysFstatat, a1, a2, uintptr(unsafe.Pointer(&st)), a4, 0, 0)
++		if err == 0 {
++			st.convert((*Stat_t)(unsafe.Pointer(a3)))
++		}
++		return
++
++	case ps5NewGetdirentries:
++		n, e := ps5Getdirentries(call, a1, unsafe.Slice((*byte)(unsafe.Pointer(a2)), int(a3)), (*int64)(unsafe.Pointer(a4)))
++		if e != 0 {
++			return ps5Result(e)
++		}
++		return uintptr(n), 0, 0
++
++	case ps5NewStatfs, ps5NewFstatfs:
++		old := uintptr(ps5SysStatfs)
++		if trap == ps5NewFstatfs {
++			old = ps5SysFstatfs
++		}
++		var st ps5Statfs
++		r1, r2, err = call(old, a1, uintptr(unsafe.Pointer(&st)), 0, 0, 0, 0)
++		if err == 0 {
++			st.convert((*Statfs_t)(unsafe.Pointer(a2)))
++		}
++		return
++
++	case ps5NewMknodat:
++		return call(ps5SysMknodat, a1, a2, a3, a4, 0, 0)
++
++	case ps5NewKevent:
++		return ps5Kevent(call, a1, a2, a3, a4, a5, a6)
++
++	case ps5NewGetrandom:
++		n, e := ps5Getrandom(unsafe.Slice((*byte)(unsafe.Pointer(a1)), int(a2)))
++		if e != 0 {
++			return ps5Result(e)
++		}
++		return uintptr(n), 0, 0
++	}
++
++	return ps5Result(ENOSYS)
++}
++
++func ps5Result(e Errno) (r1, r2 uintptr, err Errno) {
++	if e != 0 {
++		return ^uintptr(0), 0, e
++	}
++	return 0, 0, 0
++}
++
++func ps5SetFdFlags(fd uintptr, cloexec, nonblock bool) {
++	if cloexec {
++		rawSysDirect(SYS_FCNTL, fd, F_SETFD, FD_CLOEXEC)
++	}
++	if nonblock {
++		if fl, _, e := rawSysDirect(SYS_FCNTL, fd, F_GETFL, 0); e == 0 {
++			rawSysDirect(SYS_FCNTL, fd, F_SETFL, fl|O_NONBLOCK)
++		}
++	}
++}
++
++// ps5Stat is struct stat as the PS5 kernel fills it in (FreeBSD 9 to 11).
++type ps5Stat struct {
++	Dev      uint32
++	Ino      uint32
++	Mode     uint16
++	Nlink    uint16
++	Uid      uint32
++	Gid      uint32
++	Rdev     uint32
++	Atim     Timespec
++	Mtim     Timespec
++	Ctim     Timespec
++	Size     int64
++	Blocks   int64
++	Blksize  uint32
++	Flags    uint32
++	Gen      uint32
++	Lspare   int32
++	Birthtim Timespec
++}
++
++func (old *ps5Stat) convert(st *Stat_t) {
++	*st = Stat_t{
++		Dev:           uint64(old.Dev),
++		Ino:           uint64(old.Ino),
++		Nlink:         uint64(old.Nlink),
++		Mode:          old.Mode,
++		Uid:           old.Uid,
++		Gid:           old.Gid,
++		Rdev:          uint64(old.Rdev),
++		Atimespec:     old.Atim,
++		Mtimespec:     old.Mtim,
++		Ctimespec:     old.Ctim,
++		Birthtimespec: old.Birthtim,
++		Size:          old.Size,
++		Blocks:        old.Blocks,
++		Blksize:       int32(old.Blksize),
++		Flags:         old.Flags,
++		Gen:           uint64(old.Gen),
++	}
++}
++
++// ps5Statfs is struct statfs as the PS5 kernel fills it in. It differs from
++// the current layout only in the length of the two mount names.
++type ps5Statfs struct {
++	Version     uint32
++	Type        uint32
++	Flags       uint64
++	Bsize       uint64
++	Iosize      uint64
++	Blocks      uint64
++	Bfree       uint64
++	Bavail      int64
++	Files       uint64
++	Ffree       int64
++	Syncwrites  uint64
++	Asyncwrites uint64
++	Syncreads   uint64
++	Asyncreads  uint64
++	Spare       [10]uint64
++	Namemax     uint32
++	Owner       uint32
++	Fsid        Fsid
++	Charspare   [80]int8
++	Fstypename  [16]int8
++	Mntfromname [88]int8
++	Mntonname   [88]int8
++}
++
++func (old *ps5Statfs) convert(st *Statfs_t) {
++	*st = Statfs_t{
++		Version:     old.Version,
++		Type:        old.Type,
++		Flags:       old.Flags,
++		Bsize:       old.Bsize,
++		Iosize:      old.Iosize,
++		Blocks:      old.Blocks,
++		Bfree:       old.Bfree,
++		Bavail:      old.Bavail,
++		Files:       old.Files,
++		Ffree:       old.Ffree,
++		Syncwrites:  old.Syncwrites,
++		Asyncwrites: old.Asyncwrites,
++		Syncreads:   old.Syncreads,
++		Asyncreads:  old.Asyncreads,
++		Spare:       old.Spare,
++		Namemax:     old.Namemax,
++		Owner:       old.Owner,
++		Fsid:        old.Fsid,
++		Charspare:   old.Charspare,
++		Fstypename:  old.Fstypename,
++	}
++	copy(st.Mntfromname[:], old.Mntfromname[:])
++	copy(st.Mntonname[:], old.Mntonname[:])
++}
++
++// ps5Timevals converts the [2]Timespec argument of futimens/utimensat into the
++// [2]Timeval that futimes/utimes take. UTIME_NOW and UTIME_OMIT are resolved
++// here; stat is called only when a current timestamp has to be kept. omit
++// reports that both times are UTIME_OMIT, in which case there is nothing to do.
++func ps5Timevals(times uintptr, stat func(*ps5Stat) Errno) (tv *[2]Timeval, omit bool, err Errno) {
++	if times == 0 {
++		return nil, false, 0
++	}
++	ts := (*[2]Timespec)(unsafe.Pointer(times))
++	if ts[0].Nsec == ps5UtimeOmit && ts[1].Nsec == ps5UtimeOmit {
++		return nil, true, 0
++	}
++	var now Timespec
++	var st ps5Stat
++	haveNow, haveStat := false, false
++	tv = new([2]Timeval)
++	for i := range ts {
++		t := ts[i]
++		switch t.Nsec {
++		case ps5UtimeNow:
++			if !haveNow {
++				rawSysDirect(ps5SysClockGettime, 0 /* CLOCK_REALTIME */, uintptr(unsafe.Pointer(&now)), 0)
++				haveNow = true
++			}
++			t = now
++		case ps5UtimeOmit:
++			if !haveStat {
++				if e := stat(&st); e != 0 {
++					return nil, false, e
++				}
++				haveStat = true
++			}
++			if i == 0 {
++				t = st.Atim
++			} else {
++				t = st.Mtim
++			}
++		}
++		tv[i] = Timeval{Sec: t.Sec, Usec: t.Nsec / 1000}
++	}
++	return tv, false, 0
++}
++
++// Directory reading.
++//
++// The kernel returns the old directory entry (32-bit inode, 8 byte header)
++// and several PS5 filesystems, /data among them, reject any read that is not
++// exactly one 64 KiB block. A block can expand to more converted entries than
++// fit in the caller's buffer, so the remainder is kept per descriptor and
++// handed out by the following calls. The saved file offset detects a seek or a
++// reused descriptor, which invalidates the remainder.
++
++const ps5DirBlock = 65536
++
++type ps5DirState struct {
++	off  int64  // file offset after the block that produced data
++	data []byte // converted entries not yet returned
++}
++
++var (
++	ps5DirMu sync.Mutex
++	ps5Dirs  map[uintptr]*ps5DirState
++)
++
++func ps5Getdirentries(call ps5Call, fd uintptr, buf []byte, basep *int64) (int, Errno) {
++	cur, _, e := rawSysDirect(ps5SysLseek, fd, 0, 1 /* SEEK_CUR */)
++	if e != 0 {
++		return 0, e
++	}
++
++	ps5DirMu.Lock()
++	st := ps5Dirs[fd]
++	if st != nil && (st.off != int64(cur) || len(st.data) == 0) {
++		delete(ps5Dirs, fd)
++		st = nil
++	}
++	ps5DirMu.Unlock()
++
++	if st == nil {
++		block := make([]byte, ps5DirBlock)
++		for {
++			var base int64
++			n, _, e := call(ps5SysGetdirentries, fd, uintptr(unsafe.Pointer(&block[0])), ps5DirBlock, uintptr(unsafe.Pointer(&base)), 0, 0)
++			if e != 0 {
++				return 0, e
++			}
++			if n == 0 {
++				return 0, 0
++			}
++			if data := ps5ConvertDirents(block[:n]); len(data) > 0 {
++				off, _, _ := rawSysDirect(ps5SysLseek, fd, 0, 1)
++				st = &ps5DirState{off: int64(off), data: data}
++				break
++			}
++			// A block holding only unused entries: keep reading.
++		}
++	}
++
++	n := 0
++	for n < len(st.data) {
++		reclen := int(st.data[n+16]) | int(st.data[n+17])<<8
++		if n+reclen > len(buf) {
++			break
++		}
++		n += reclen
++	}
++	if n == 0 {
++		// Not even one entry fits.
++		ps5DirMu.Lock()
++		if ps5Dirs == nil {
++			ps5Dirs = make(map[uintptr]*ps5DirState)
++		}
++		ps5Dirs[fd] = st
++		ps5DirMu.Unlock()
++		return 0, EINVAL
++	}
++	copy(buf, st.data[:n])
++	st.data = st.data[n:]
++
++	ps5DirMu.Lock()
++	if len(st.data) > 0 {
++		if ps5Dirs == nil {
++			ps5Dirs = make(map[uintptr]*ps5DirState)
++		}
++		ps5Dirs[fd] = st
++	} else {
++		delete(ps5Dirs, fd)
++	}
++	ps5DirMu.Unlock()
++
++	if basep != nil {
++		*basep = st.off
++	}
++	return n, 0
++}
++
++// ps5ConvertDirents rewrites a block of old directory entries
++// (fileno uint32, reclen uint16, type uint8, namlen uint8, name) as Dirent
++// records. Unused entries (fileno 0) are dropped.
++func ps5ConvertDirents(old []byte) []byte {
++	const (
++		oldHeader = 8
++		newHeader = int(unsafe.Offsetof(Dirent{}.Name))
++	)
++	out := make([]byte, 0, len(old)*2)
++	for pos := 0; pos+oldHeader <= len(old); {
++		fileno := uint32(old[pos]) | uint32(old[pos+1])<<8 | uint32(old[pos+2])<<16 | uint32(old[pos+3])<<24
++		reclen := int(old[pos+4]) | int(old[pos+5])<<8
++		typ := old[pos+6]
++		namlen := int(old[pos+7])
++		if reclen < oldHeader || pos+reclen > len(old) {
++			break
++		}
++		if fileno != 0 && pos+oldHeader+namlen <= len(old) {
++			newlen := (newHeader + namlen + 1 + 7) &^ 7
++			start := len(out)
++			out = append(out, make([]byte, newlen)...)
++			rec := out[start:]
++			rec[0], rec[1], rec[2], rec[3] = byte(fileno), byte(fileno>>8), byte(fileno>>16), byte(fileno>>24)
++			rec[16], rec[17] = byte(newlen), byte(newlen>>8)
++			rec[18] = typ
++			rec[20], rec[21] = byte(namlen), byte(namlen>>8)
++			copy(rec[newHeader:], old[pos+oldHeader:pos+oldHeader+namlen])
++		}
++		pos += reclen
++	}
++	return out
++}
++
++// ps5Kevent implements the FreeBSD 12 kevent, whose events carry four extra
++// words, with the older call.
++func ps5Kevent(call ps5Call, kq, changes, nchanges, events, nevents, timeout uintptr) (r1, r2 uintptr, err Errno) {
++	type newKevent struct {
++		Kevent_t
++		Ext [4]uint64
++	}
++	var oldChanges, oldEvents []Kevent_t
++	var pc, pe unsafe.Pointer
++	if nchanges > 0 {
++		in := unsafe.Slice((*newKevent)(unsafe.Pointer(changes)), int(nchanges))
++		oldChanges = make([]Kevent_t, len(in))
++		for i := range in {
++			oldChanges[i] = in[i].Kevent_t
++		}
++		pc = unsafe.Pointer(&oldChanges[0])
++	}
++	if nevents > 0 {
++		oldEvents = make([]Kevent_t, int(nevents))
++		pe = unsafe.Pointer(&oldEvents[0])
++	}
++	r1, r2, err = call(ps5SysKevent, kq, uintptr(pc), nchanges, uintptr(pe), nevents, timeout)
++	runtime.KeepAlive(oldChanges)
++	if err == 0 && nevents > 0 {
++		out := unsafe.Slice((*newKevent)(unsafe.Pointer(events)), int(nevents))
++		for i := 0; i < int(r1) && i < len(out); i++ {
++			out[i] = newKevent{Kevent_t: oldEvents[i]}
++		}
++	}
++	return
++}
++
++// ps5Getrandom fills buf from the kernel's kern.arandom sysctl, which hands
++// out at most 256 bytes per call.
++func ps5Getrandom(buf []byte) (int, Errno) {
++	mib := [2]_C_int{1 /* CTL_KERN */, 37 /* KERN_ARND */}
++	for done := 0; done < len(buf); {
++		n := uintptr(len(buf) - done)
++		if n > 256 {
++			n = 256
++		}
++		_, _, e := rawSysDirect6(ps5SysSysctl, uintptr(unsafe.Pointer(&mib[0])), 2, uintptr(unsafe.Pointer(&buf[done])), uintptr(unsafe.Pointer(&n)), 0, 0)
++		if e != 0 {
++			return done, e
++		}
++		if n == 0 {
++			return done, EIO
++		}
++		done += int(n)
++	}
++	return len(buf), 0
++}
+diff --git a/src/internal/routebsd/interface_freebsd.go b/src/internal/routebsd/interface_freebsd.go
+index 7e10554..71f00ec 100644
+--- a/src/internal/routebsd/interface_freebsd.go
++++ b/src/internal/routebsd/interface_freebsd.go
+@@ -20,6 +20,11 @@ func (w *wireFormat) parseInterfaceMessage(b []byte) (Message, error) {
+ 	if attrs&syscall.RTA_IFP == 0 {
+ 		return nil, nil
+ 	}
++	// PS5: Sony's if_data is larger than FreeBSD's, so the link address is
++	// not at the usual offset. if_data records its own length; use it.
++	if dl := int(nativeEndian.Uint16(b[extOff+6 : extOff+8])); dl != 0 && extOff+dl+8 <= l {
++		bodyOff = extOff + dl
++	}
+ 	m := &InterfaceMessage{
+ 		Version: int(b[2]),
+ 		Type:    int(b[3]),
+diff --git a/src/os/executable_sysctl.go b/src/os/executable_sysctl.go
+index 8b52e92..fc91280 100644
+--- a/src/os/executable_sysctl.go
++++ b/src/os/executable_sysctl.go
+@@ -12,6 +12,24 @@ import (
+ )
+ 
+ func executable() (string, error) {
++	p, err := executableSysctl()
++	if err == nil && p != "" {
++		return p, nil
++	}
++	// PS5: a payload is loaded from memory into a host process, so the
++	// kernel has no path to report. Programs mostly want a name to derive
++	// defaults from; give them one based on argv[0] rather than an error.
++	name := "payload.elf"
++	if len(Args) > 0 && Args[0] != "" {
++		name = Args[0]
++	}
++	if name[0] != '/' {
++		name = "/" + name
++	}
++	return name, nil
++}
++
++func executableSysctl() (string, error) {
+ 	n := uintptr(0)
+ 	// get length
+ 	_, _, err := syscall.Syscall6(syscall.SYS___SYSCTL, uintptr(unsafe.Pointer(&executableMIB[0])), 4, 0, uintptr(unsafe.Pointer(&n)), 0, 0)

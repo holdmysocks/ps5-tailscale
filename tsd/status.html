@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tailscale on PS5</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --text: #1c1e21; --muted: #646a73;
+    --line: #dfe2e6; --accent: #2f5fd0; --ok: #1f8a4c; --warn: #b26a00; --bad: #c0362c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a; --panel: #1e2126; --text: #e8eaed; --muted: #9aa1ab;
+      --line: #30353c; --accent: #7fa4ff; --ok: #56c488; --warn: #e0a84a; --bad: #f0796f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px 48px; background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 0 0 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  .sub { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; margin-bottom: 16px; }
+  .state { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 600; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 14px 0 0; }
+  dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+  code { font: 14px ui-monospace, SFMono-Regular, Consolas, monospace; }
+  a { color: var(--accent); }
+  .login { text-align: center; }
+  .login img { width: 240px; height: 240px; image-rendering: pixelated; background: #fff; padding: 8px; border-radius: 8px; }
+  .login .url { display: block; margin: 12px 0 4px; font-size: 18px; overflow-wrap: anywhere; }
+  .msg { color: var(--bad); margin: 12px 0 0; overflow-wrap: anywhere; }
+  .health { color: var(--warn); margin: 12px 0 0; padding-left: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 8px 8px 0; }
+  td { padding: 7px 8px 7px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+  td.off { color: var(--muted); }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+  button {
+    font: inherit; padding: 9px 16px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--text); cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.danger { color: var(--bad); }
+  pre { margin: 0; max-height: 320px; overflow: auto; font: 12.5px/1.45 ui-monospace, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+  details summary { cursor: pointer; color: var(--muted); }
+  .note { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
+  .field { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--muted); }
+  select {
+    font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--text); min-width: 220px;
+  }
+  .actions { align-items: flex-end; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tailscale on PS5</h1>
+  <p class="sub" id="version"></p>
+
+  <section class="panel">
+    <div class="state"><span class="dot" id="dot"></span><span id="state">Loading…</span></div>
+    <dl id="facts"></dl>
+    <ul class="health hidden" id="health"></ul>
+    <p class="msg hidden" id="error"></p>
+  </section>
+
+  <section class="panel login hidden" id="login">
+    <h2>Log in</h2>
+    <p>Scan this with your phone, or open the link on any device, to add this PS5 to your tailnet.</p>
+    <img id="qr" alt="QR code for the login link">
+    <a class="url" id="authurl" target="_blank" rel="noopener"></a>
+  </section>
+
+  <section class="panel hidden" id="peerpanel">
+    <h2>Devices on your tailnet</h2>
+    <table>
+      <thead><tr><th>Name</th><th>Address</th><th>OS</th><th>Status</th></tr></thead>
+      <tbody id="peers"></tbody>
+    </table>
+  </section>
+
+  <section class="panel hidden" id="streampanel">
+    <h2>Game streaming (Moonlight to Sunshine)</h2>
+    <p class="note">Apps on the PS5 cannot reach tailnet addresses directly. Pick the device that runs Sunshine and its
+      streaming ports are made available on this console. Then, in your Moonlight client on the PS5 (for example
+      ProsperoLight), add the host <code>127.0.0.1</code>.</p>
+    <div class="actions">
+      <label class="field">Sunshine host
+        <select id="sunshine-select"></select>
+      </label>
+      <button id="btn-sunshine">Save</button>
+    </div>
+    <p class="note" id="sunshine-state"></p>
+  </section>
+
+  <section class="panel">
+    <h2>Actions</h2>
+    <div class="actions">
+      <button id="btn-login">Log in again</button>
+      <button id="btn-logout" class="danger">Log out</button>
+      <button id="btn-quit" class="danger">Stop Tailscale</button>
+      <button id="btn-uninstall" class="danger">Uninstall</button>
+    </div>
+    <p class="msg hidden" id="actionmsg"></p>
+  </section>
+
+  <section class="panel">
+    <details id="logbox">
+      <summary>Recent log</summary>
+      <pre id="logs"></pre>
+    </details>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const labels = {
+  Starting: ['Starting…', 'warn'],
+  NoState: ['Starting…', 'warn'],
+  NeedsLogin: ['Not logged in', 'warn'],
+  NeedsMachineAuth: ['Waiting for approval in the admin console', 'warn'],
+  Stopped: ['Stopped', 'bad'],
+  Running: ['Connected', 'ok'],
+};
+let shownQR = '';
+
+function row(dl, name, value, mono) {
+  const dt = document.createElement('dt'); dt.textContent = name;
+  const dd = document.createElement('dd');
+  if (mono) { const c = document.createElement('code'); c.textContent = value; dd.append(c); }
+  else dd.textContent = value;
+  dl.append(dt, dd);
+}
+
+async function refresh() {
+  let s;
+  try {
+    s = await (await fetch('/api/status', {cache: 'no-store'})).json();
+  } catch (e) {
+    $('state').textContent = 'Not responding';
+    $('dot').className = 'dot bad';
+    return;
+  }
+  const [label, cls] = labels[s.state] || [s.state, 'warn'];
+  $('state').textContent = label;
+  $('dot').className = 'dot ' + cls;
+  $('version').textContent = 'ps5-tailscale ' + s.version;
+
+  const dl = $('facts');
+  dl.replaceChildren();
+  row(dl, 'Name', s.dnsName || s.hostname);
+  if (s.ips.length) row(dl, 'Tailnet address', s.ips.join(', '), true);
+  if (s.tailnet) row(dl, 'Tailnet', s.tailnet);
+  if (s.proxy) row(dl, 'HTTP proxy', s.proxy, true);
+  row(dl, 'Starts with the console', s.autostart.length ? 'Yes, via ' + s.autostart.join(', ') : 'No');
+
+  const health = $('health');
+  health.replaceChildren(...(s.health || []).map(h => { const li = document.createElement('li'); li.textContent = h; return li; }));
+  health.classList.toggle('hidden', !(s.health || []).length);
+
+  $('error').textContent = s.error || '';
+  $('error').classList.toggle('hidden', !s.error);
+
+  const needLogin = !!s.authURL;
+  $('login').classList.toggle('hidden', !needLogin);
+  if (needLogin) {
+    $('authurl').textContent = s.authURL;
+    $('authurl').href = s.authURL;
+    if (shownQR !== s.authURL) { shownQR = s.authURL; $('qr').src = '/qr.png?' + Date.now(); }
+  }
+
+  const tbody = $('peers');
+  tbody.replaceChildren(...s.peers.map(p => {
+    const tr = document.createElement('tr');
+    for (const [v, mono] of [[p.name], [p.ip, true], [p.os], [p.online ? 'online' : 'offline']]) {
+      const td = document.createElement('td');
+      if (!p.online) td.className = 'off';
+      if (mono) { const c = document.createElement('code'); c.textContent = v; td.append(c); } else td.textContent = v;
+      tr.append(td);
+    }
+    return tr;
+  }));
+  $('peerpanel').classList.toggle('hidden', !s.peers.length);
+
+  // Game streaming: offer the tailnet's devices, keep the user's selection
+  // while they are choosing.
+  $('streampanel').classList.toggle('hidden', s.state !== 'Running' && !s.sunshineHost);
+  const sel = $('sunshine-select');
+  const options = ['', ...s.peers.map(p => p.name)];
+  if (s.sunshineHost && !options.includes(s.sunshineHost)) options.push(s.sunshineHost);
+  const signature = options.join('|') + '#' + s.sunshineHost;
+  if (sel.dataset.signature !== signature && document.activeElement !== sel) {
+    sel.replaceChildren(...options.map(name => {
+      const o = document.createElement('option');
+      o.value = name;
+      const peer = s.peers.find(p => p.name === name);
+      o.textContent = name === '' ? 'None (off)' : name + (peer && !peer.online ? ' (offline)' : '');
+      return o;
+    }));
+    sel.value = s.sunshineHost;
+    sel.dataset.signature = signature;
+  }
+  $('sunshine-state').textContent = s.sunshineHost
+    ? 'Forwarding 127.0.0.1 to ' + s.sunshineHost + ' (' + s.forwards.length + ' ports).'
+    : 'Off.';
+
+  if ($('logbox').open) {
+    try { $('logs').textContent = await (await fetch('/api/logs', {cache: 'no-store'})).text(); } catch (e) {}
+  }
+}
+
+async function act(path, confirmText) {
+  if (confirmText && !confirm(confirmText)) return;
+  const msg = $('actionmsg');
+  msg.classList.add('hidden');
+  try {
+    const r = await fetch(path, {method: 'POST', headers: {'X-PS5-Tailscale': '1'}});
+    if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+  } catch (e) {
+    msg.textContent = e.message;
+    msg.classList.remove('hidden');
+  }
+  refresh();
+}
+
+$('btn-login').onclick = () => act('/api/login');
+$('btn-logout').onclick = () => act('/api/logout', 'Log this PS5 out of your tailnet?');
+$('btn-quit').onclick = () => act('/api/quit', 'Stop Tailscale on this PS5? Send the payload again to start it.');
+$('btn-sunshine').onclick = async () => {
+  await act('/api/sunshine?host=' + encodeURIComponent($('sunshine-select').value));
+  $('sunshine-select').dataset.signature = '';
+};
+$('btn-uninstall').onclick = () => {
+  if (!confirm('Remove Tailscale from this PS5? It will stop now and no longer start with the console.')) return;
+  const purge = confirm('Also log out and delete the saved login?\n\nOK: delete everything.\nCancel: keep the login, so reinstalling reconnects without logging in again.');
+  act('/api/uninstall' + (purge ? '?purge=1' : ''));
+};
+$('logbox').addEventListener('toggle', refresh);
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>
