@@ -43,8 +43,6 @@ type statusInfo struct {
 	Health   []string   `json:"health,omitempty"`
 	Peers    []peerInfo `json:"peers"`
 	Proxy    string     `json:"proxy,omitempty"`
-	// Autostart lists the autoloaders that start the daemon.
-	Autostart []string `json:"autostart"`
 	// SunshineHost and Forwards describe the local forwards.
 	SunshineHost string   `json:"sunshineHost"`
 	Forwards     []string `json:"forwards"`
@@ -141,7 +139,6 @@ func (d *daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	info.SunshineHost = d.cfg.SunshineHost
 	d.mu.Unlock()
-	info.Autostart = autostartNames()
 	info.Forwards = []string{}
 	for _, r := range d.fwd.rules() {
 		info.Forwards = append(info.Forwards, r.String())
@@ -299,9 +296,9 @@ func (d *daemon) stop() {
 	d.quitOnce.Do(func() { close(d.quit) })
 }
 
-// handleUninstall removes the autostart entry and the installed payload, then
-// stops. With ?purge=1 it first logs the console out of the tailnet and
-// deletes the saved state as well.
+// handleUninstall removes the installed payload, then stops. With ?purge=1 it
+// first logs the console out of the tailnet and deletes the saved state as
+// well.
 func (d *daemon) handleUninstall(w http.ResponseWriter, r *http.Request) {
 	purge := r.URL.Query().Get("purge") == "1"
 	if purge && d.lc != nil {
@@ -309,7 +306,7 @@ func (d *daemon) handleUninstall(w http.ResponseWriter, r *http.Request) {
 			d.logf("uninstall: logout: %v", err)
 		}
 	}
-	if err := uninstall(purge, d.logf); err != nil {
+	if err := uninstall(purge); err != nil {
 		d.logf("uninstall: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

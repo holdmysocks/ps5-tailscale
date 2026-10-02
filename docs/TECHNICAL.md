@@ -37,10 +37,11 @@ specification.
 - A payload that is sent again stops the running instance (through the
   status page, or failing that by the pid it recorded) and takes over.
 
-**The installer** (`installer/`, C) embeds `tailscale.elf`. It stores it
-where the console's autoloader looks, appends it to the load order, registers
-a home screen app whose `param.json` has a `deeplinkUri` to the status page,
-and starts the daemon by sending it to the ELF loader on `127.0.0.1:9021`.
+**The installer** (`installer/`, C) embeds `tailscale.elf`. It writes it to
+`/data/tailscale/tailscale.elf`, registers a home screen app whose
+`param.json` has a `deeplinkUri` to the status page, and starts the daemon by
+sending it to the ELF loader on `127.0.0.1:9021`. It does not modify any
+payload autoloader.
 
 ## The PS5 as a Go target
 
@@ -135,17 +136,6 @@ browser.
 Linking `libSceAppInstUtil` alone leaves the payload stopped before it runs.
 It needs `-lSceIpmi -lSceAppInstUtil -lSceUserService -lSceSystemService`, in
 that order, as in the SDK's `install_app` sample.
-
-## Autoloaders
-
-- Payload Manager: load order in `/data/pldmgr/autoload.txt`, one file name
-  per line, `!N` for a delay in milliseconds. It finds a named file anywhere
-  below `/data/pldmgr` and launches it by streaming it to `127.0.0.1:9021`.
-- `ps5_autoloader`: `autoload.txt` in `/data/ps5_autoloader` or the same
-  folder on a USB drive, with the payloads next to it.
-
-The table of autoloaders exists twice, in `installer/main.c` and
-`tsd/autostart.go`.
 
 ## Known problems
 

@@ -1,9 +1,9 @@
 /* Tailscale installer payload for jailbroken PS5s.
  *
- * Stores the Tailscale daemon payload on the console, registers it with the
- * payload autoloader if one is set up, adds a home screen icon that opens
- * the status page, and starts the daemon through the ELF loader on this
- * console. Build with tools\build-installer.ps1, which sets DAEMON_ELF and
+ * Stores the Tailscale daemon payload on the console, adds a home screen
+ * icon that opens the status page, and starts the daemon through the ELF
+ * loader on this console. It does not touch any payload autoloader. Build
+ * with tools\build-installer.ps1, which sets DAEMON_ELF and
  * ASSET_DIR and links the system libraries the app installer needs. */
 
 #include <errno.h>
@@ -69,23 +69,6 @@ int sceAppInstUtilInitialize(void);
 int sceAppInstUtilTerminate(void);
 int sceAppInstUtilAppInstallAll(void *);
 
-/* Where payload autoloaders keep their load order, and where the daemon has
- * to be stored for each. Keep in sync with tsd/autostart.go. */
-static const struct autoloader {
-  const char *name;
-  const char *list;        /* load order: one file name per line */
-  const char *payload_dir; /* where the payload goes */
-} autoloaders[] = {
-    /* Payload Manager finds entries by file name anywhere below /data/pldmgr
-     * and keeps each payload in a folder of its own. */
-    {"Payload Manager", "/data/pldmgr/autoload.txt", "/data/pldmgr/payloads/Tailscale"},
-    {"PS5 autoloader", "/data/ps5_autoloader/autoload.txt", "/data/ps5_autoloader"},
-    {"PS5 autoloader (usb0)", "/mnt/usb0/ps5_autoloader/autoload.txt", "/mnt/usb0/ps5_autoloader"},
-    {"PS5 autoloader (usb1)", "/mnt/usb1/ps5_autoloader/autoload.txt", "/mnt/usb1/ps5_autoloader"},
-    {"PS5 autoloader (usb2)", "/mnt/usb2/ps5_autoloader/autoload.txt", "/mnt/usb2/ps5_autoloader"},
-    {"PS5 autoloader (usb3)", "/mnt/usb3/ps5_autoloader/autoload.txt", "/mnt/usb3/ps5_autoloader"},
-};
-
 typedef struct notify_request {
   char useless1[45];
   char message[3075];
@@ -122,7 +105,7 @@ write_all(int fd, const uint8_t *data, size_t size) {
 }
 
 /* Write a file through a temporary name so a failed write never leaves a
- * truncated payload where the autoloader would pick it up. */
+ * truncated payload behind. */
 static int
 write_file(const char *path, const uint8_t *data, size_t size) {
   char tmp[512];
@@ -157,71 +140,6 @@ install_daemon(const char *dir) {
   }
   printf("  wrote %s (%.1f MB)\n", path, (daemon_elf_end - daemon_elf) / 1048576.0);
   return 0;
-}
-
-/* Report whether the load order already lists the daemon on a line of its own. */
-static int
-autoload_lists_daemon(const char *text) {
-  size_t namelen = strlen(DAEMON_NAME);
-
-  for (const char *line = text; line && *line;) {
-    const char *end = strchr(line, '\n');
-    size_t len = end ? (size_t)(end - line) : strlen(line);
-    while (len > 0 && (line[len - 1] == '\r' || line[len - 1] == ' ' || line[len - 1] == '\t')) {
-      len--;
-    }
-    if (len == namelen && !strncmp(line, DAEMON_NAME, namelen)) {
-      return 1;
-    }
-    line = end ? end + 1 : 0;
-  }
-  return 0;
-}
-
-/* If this autoloader is set up on the console, store the daemon for it and
- * add it to the end of the load order. Returns 1 if registered, 0 if the
- * autoloader is not present, -1 on error. */
-static int
-register_autoload(const struct autoloader *al) {
-  struct stat st;
-  char *text;
-  size_t got;
-  FILE *f;
-
-  if (stat(al->list, &st)) {
-    return 0;
-  }
-  printf("%s:\n", al->name);
-  if (install_daemon(al->payload_dir)) {
-    return -1;
-  }
-
-  if (!(f = fopen(al->list, "rb"))) {
-    printf("  could not read %s: %s\n", al->list, strerror(errno));
-    return -1;
-  }
-  text = calloc(1, st.st_size + 1);
-  got = fread(text, 1, st.st_size, f);
-  fclose(f);
-  text[got] = 0;
-
-  if (autoload_lists_daemon(text)) {
-    printf("  %s already lists %s\n", al->list, DAEMON_NAME);
-  } else {
-    if (!(f = fopen(al->list, "ab"))) {
-      printf("  could not update %s: %s\n", al->list, strerror(errno));
-      free(text);
-      return -1;
-    }
-    if (got > 0 && text[got - 1] != '\n') {
-      fputc('\n', f);
-    }
-    fputs(DAEMON_NAME "\n", f);
-    fclose(f);
-    printf("  added %s to the end of %s\n", DAEMON_NAME, al->list);
-  }
-  free(text);
-  return 1;
 }
 
 /* Report whether the file at path already has exactly these contents. */
@@ -346,7 +264,6 @@ int
 main(void) {
   pid_t pid = getpid();
   intptr_t rootvnode;
-  int registered = 0;
 
   setvbuf(stdout, 0, _IONBF, 0);
 
@@ -368,23 +285,11 @@ main(void) {
 #endif
 
   printf("Tailscale for PS5 installer\n\n");
-  mkdir(DATA_DIR, 0755);
 
-  for (size_t i = 0; i < sizeof(autoloaders) / sizeof(autoloaders[0]); i++) {
-    if (register_autoload(&autoloaders[i]) > 0) {
-      registered++;
-    }
-  }
-  if (!registered) {
-    /* No autoloader: keep the payload where the user can find it. */
-    printf("No payload autoloader found on this console.\n");
-    if (install_daemon(DATA_DIR)) {
-      notify("Tailscale install failed:\ncould not write to %s", DATA_DIR);
-      return 1;
-    }
-    printf("  Tailscale will not start by itself after a reboot.\n"
-           "  Send %s/%s to the ELF loader to start it.\n",
-           DATA_DIR, DAEMON_NAME);
+  printf("Daemon payload:\n");
+  if (install_daemon(DATA_DIR)) {
+    notify("Tailscale install failed:\ncould not write to %s", DATA_DIR);
+    return 1;
   }
 
   printf("Home screen icon:\n");
@@ -397,6 +302,9 @@ main(void) {
     return 1;
   }
 
-  printf("\nDone. The status page is on port 8090 of this console.\n");
+  printf("\nDone. The status page is on port 8090 of this console.\n"
+         "Tailscale runs until the console restarts. To start it again, send\n"
+         "%s/%s to the ELF loader.\n",
+         DATA_DIR, DAEMON_NAME);
   return 0;
 }

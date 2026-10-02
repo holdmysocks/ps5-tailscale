@@ -161,7 +161,6 @@ async function refresh() {
   if (s.ips.length) row(dl, 'Tailnet address', s.ips.join(', '), true);
   if (s.tailnet) row(dl, 'Tailnet', s.tailnet);
   if (s.proxy) row(dl, 'HTTP proxy', s.proxy, true);
-  row(dl, 'Starts with the console', s.autostart.length ? 'Yes, via ' + s.autostart.join(', ') : 'No');
 
   const health = $('health');
   health.replaceChildren(...(s.health || []).map(h => { const li = document.createElement('li'); li.textContent = h; return li; }));
@@ -240,7 +239,7 @@ $('btn-sunshine').onclick = async () => {
   $('sunshine-select').dataset.signature = '';
 };
 $('btn-uninstall').onclick = () => {
-  if (!confirm('Remove Tailscale from this PS5? It will stop now and no longer start with the console.')) return;
+  if (!confirm('Remove Tailscale from this PS5? It stops now and its payload is deleted.')) return;
   const purge = confirm('Also log out and delete the saved login?\n\nOK: delete everything.\nCancel: keep the login, so reinstalling reconnects without logging in again.');
   act('/api/uninstall' + (purge ? '?purge=1' : ''));
 };

@@ -7,8 +7,7 @@ Puts a jailbroken PS5 on your [Tailscale](https://tailscale.com) network.
   your other Tailscale devices.
 - **Stream games to the console over Tailscale.** A Moonlight client on the
   PS5 (such as ProsperoLight) can connect to a Sunshine host on your tailnet.
-- **Starts by itself** after each jailbreak if you use a payload autoloader,
-  and adds a home screen icon for its status page.
+- **Home screen icon** that opens its status page.
 
 It runs the real Tailscale client code (v1.104.0) as a single payload.
 
@@ -36,11 +35,8 @@ VPN here. It runs inside one process:
 - A jailbroken PS5 with an ELF loader listening on port 9021
   (for example [elfldr](https://github.com/ps5-payload-dev/elfldr)).
 - A Tailscale account.
-- Optional: a payload autoloader, so Tailscale starts after every jailbreak.
-  [Payload Manager](https://github.com/itsPLK/ps5-payload-manager) and
-  `ps5_autoloader` folders are detected.
 
-Tested on firmware 13.42 with elfldr 0.26 and Payload Manager 0.5.2.
+Tested on firmware 13.42 with elfldr 0.26.
 
 ## Install
 
@@ -59,8 +55,7 @@ Tested on firmware 13.42 with elfldr 0.26 and Payload Manager 0.5.2.
    ```
 
    The installer prints what it does. It:
-   - stores the daemon payload (`tailscale.elf`),
-   - adds it to the end of your autoloader's load order, if it finds one,
+   - stores the daemon payload as `/data/tailscale/tailscale.elf`,
    - adds a **Tailscale** icon to the home screen (media section),
    - starts Tailscale.
 
@@ -72,6 +67,11 @@ The console now has a tailnet address, shown on the status page.
 
 Sending the installer again upgrades and restarts Tailscale. The login is
 kept.
+
+Tailscale runs until the console restarts. After a restart and jailbreak,
+send `/data/tailscale/tailscale.elf` (or the installer) to the ELF loader
+again. The installer does not change any payload autoloader; if you use one,
+you can add that file to it yourself.
 
 ## Using it
 
@@ -141,7 +141,7 @@ The daemon also runs an HTTP proxy on `127.0.0.1:8118` that reaches tailnet
 hosts, for apps that have their own proxy setting. **Do not set it as the
 PS5's system proxy.** The system then sends everything through it, including
 pages on `127.0.0.1`, and it is not running until Tailscale has been loaded.
-On the test console that stopped Payload Manager's page from opening.
+On the test console that stopped another homebrew tool's page from opening.
 
 ## Configuration
 
@@ -184,20 +184,19 @@ Files on the console:
 | `/data/tailscale/state/` | Tailscale's state, including the login. |
 | `/data/tailscale/tailscale.log` | The daemon's log, rotated at 2 MB. |
 | `/data/tailscale/tailscale-debug.log` | Tailscale's detailed log, up to 4 MB plus one older file. |
-| `/data/pldmgr/payloads/Tailscale/tailscale.elf` | The daemon, when Payload Manager is used. |
-| `/data/tailscale/tailscale.elf` | The daemon, when no autoloader was found. |
+| `/data/tailscale/tailscale.elf` | The daemon payload. |
 | `/user/app/TSCL00001/` | The home screen icon. |
 
 ## Uninstall
 
-Press **Uninstall** on the status page. It removes the autoloader entry and
-the daemon payload and stops Tailscale. It asks whether to also log out and
-delete the saved login.
+Press **Uninstall** on the status page. It deletes the daemon payload and
+stops Tailscale. It asks whether to also log out and delete the saved login.
 
 Two things are left to do by hand:
 
 - Delete the home screen icon (Options button, then Delete).
 - Remove the device in the Tailscale admin console.
+- If you added the payload to an autoloader yourself, remove it there.
 
 ## Troubleshooting
 
@@ -229,13 +228,12 @@ lowest scheduling priority on at most 4 cores, so it gives way to games.
 ## What has and has not been tested
 
 Tested on the one console: install and upgrade, login with device approval,
-autostart after a reboot through Payload Manager, reaching the console over
+starting again after a reboot with the saved login, reaching the console over
 the tailnet, a ProsperoLight stream from a Sunshine host through the forward,
 the HTTP proxy, the home screen icon.
 
-Not tested: rest mode, the `ps5_autoloader` and USB autoloader paths,
-Uninstall on a console, other firmware versions, coordination servers other
-than Tailscale's.
+Not tested: rest mode, Uninstall on a console, other firmware versions,
+coordination servers other than Tailscale's.
 
 ## Building
 
