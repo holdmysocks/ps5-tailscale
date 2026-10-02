@@ -11,9 +11,11 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -105,6 +107,7 @@ type daemon struct {
 	srv *tsnet.Server
 	lc  *local.Client
 	fwd *forwarder
+	udp *udpExposer
 
 	mu       sync.Mutex
 	state    string // ipn backend state, e.g. "NeedsLogin", "Running"
@@ -174,8 +177,10 @@ func (d *daemon) run() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	d.udp = &udpExposer{listen: d.srv.ListenPacket, logf: d.logf, targetHost: "127.0.0.1"}
 	go d.watch(ctx)
 	go d.recoverLogin(ctx)
+	go d.exposeUDP(ctx)
 
 	sigc := make(chan os.Signal, 1)
 	signal.Notify(sigc, syscall.SIGTERM, syscall.SIGINT)
@@ -212,6 +217,37 @@ func (d *daemon) localForwardRules() []forwardRule {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return append(sunshineRules(d.cfg.SunshineHost), d.cfg.Forwards...)
+}
+
+// exposeUDP keeps the configured UDP ports listening on the console's tailnet
+// addresses. Those are only known once Tailscale is connected and can change,
+// so they are checked periodically.
+func (d *daemon) exposeUDP(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		d.mu.Lock()
+		running := d.state == "Running"
+		ports := slices.Clone(d.cfg.UDPPorts)
+		d.mu.Unlock()
+		if running {
+			var addrs []netip.Addr
+			v4, v6 := d.srv.TailscaleIPs()
+			for _, a := range []netip.Addr{v4, v6} {
+				if a.IsValid() {
+					addrs = append(addrs, a)
+				}
+			}
+			if len(addrs) > 0 {
+				d.udp.update(addrs, ports)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 // tsnetLogf receives tsnet's messages for the user. While it waits for a

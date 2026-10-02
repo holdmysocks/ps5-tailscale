@@ -5,6 +5,9 @@ Puts a jailbroken PS5 on your [Tailscale](https://tailscale.com) network.
 - **Reach the console from anywhere.** FTP, the payload loader, web tools:
   whatever listens on the console is available at its tailnet address from
   your other Tailscale devices.
+- **Remote Play over Tailscale.** Play the PS5 from anywhere with a Remote
+  Play client, at the console's tailnet address, with no port forwarding on
+  your router.
 - **Stream games to the console over Tailscale.** A Moonlight client on the
   PS5 (such as ProsperoLight) can connect to a Sunshine host on your tailnet.
 - **Home screen icon** that opens its status page.
@@ -82,9 +85,35 @@ want, for example FTP on 2121 or the payload loader on 9021.
 
 - Every TCP port that something on the console listens on is forwarded.
   Ports with no listener refuse the connection.
-- UDP is not forwarded in this direction.
-- To keep a port off the tailnet, add it to `blockedPorts` in the
-  [configuration](#configuration).
+- UDP ports have to be listed, in `udpPorts` in the
+  [configuration](#configuration). The default list is Remote Play's.
+- To keep a TCP port off the tailnet, add it to `blockedPorts`.
+
+### Remote Play
+
+The console's own Remote Play service is reachable at its tailnet address, so
+a Remote Play client on any of your Tailscale devices can connect from
+anywhere. Any client that lets you enter the console's address works.
+
+1. On the console, enable Remote Play (Settings > System > Remote Play).
+2. Register your Remote Play client with the console as usual. This is
+   easiest at home on the same network; see the client's documentation.
+3. In the client, add the console manually with its **tailnet address**
+   (shown on the status page).
+4. Connect.
+
+Tested and working with Chiaki, and with Asobi on iOS and Android.
+
+How it works: Remote Play uses TCP 9295 and UDP 9295, 9296, 9297 and 9302.
+The TCP port is forwarded like any other; the daemon listens on the UDP
+ports on the console's tailnet addresses and relays them to the service.
+
+Notes:
+
+- The video passes through the daemon, which runs at the lowest priority so
+  that it never takes time from a game. Under a demanding game that may show
+  as stutter.
+- Waking the console from rest mode does not work: nothing is running then.
 
 ### The status page
 
@@ -159,6 +188,7 @@ optional. Restart Tailscale (send the payload again) to apply edits.
   "forwards": [
     {"proto": "tcp", "listen": "127.0.0.1:8096", "target": "my-nas:8096"}
   ],
+  "udpPorts": [9295, 9296, 9297, 9302],
   "blockedPorts": [],
   "verbose": false
 }
@@ -173,6 +203,7 @@ optional. Restart Tailscale (send the payload again) to apply edits.
 | `controlURL` | A coordination server other than Tailscale's. |
 | `sunshineHost` | The Sunshine host; set from the status page. |
 | `forwards` | Extra local forwards: `proto` is `tcp` or `udp`, `listen` a localhost address, `target` a tailnet host and port. |
+| `udpPorts` | The console's UDP ports reachable from the tailnet. Default `[9295, 9296, 9297, 9302]` (Remote Play). `[]` turns inbound UDP off. |
 | `blockedPorts` | Local TCP ports that are never exposed to the tailnet. |
 | `verbose` | Put Tailscale's own log in the main log as well. |
 
@@ -214,9 +245,10 @@ Two things are left to do by hand:
 ## Security
 
 - The status page and its controls are unauthenticated.
-- All listening TCP ports on the console become reachable from your tailnet,
-  including the payload loader, which runs anything sent to it. Use Tailscale
-  ACLs if other people share your tailnet.
+- All listening TCP ports on the console, and the UDP ports in `udpPorts`,
+  become reachable from your tailnet. That includes the payload loader, which
+  runs anything sent to it. Use Tailscale ACLs if other people share your
+  tailnet.
 - The local forwards and the proxy listen on `127.0.0.1` only and are not
   exposed to the tailnet.
 
@@ -231,6 +263,9 @@ Tested on the one console: install and upgrade, login with device approval,
 starting again after a reboot with the saved login, reaching the console over
 the tailnet, a ProsperoLight stream from a Sunshine host through the forward,
 the HTTP proxy, the home screen icon.
+
+Remote Play through the tailnet address works with Chiaki and with Asobi on
+iOS and Android.
 
 Not tested: rest mode, Uninstall on a console, other firmware versions,
 coordination servers other than Tailscale's.

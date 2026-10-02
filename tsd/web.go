@@ -46,7 +46,9 @@ type statusInfo struct {
 	// SunshineHost and Forwards describe the local forwards.
 	SunshineHost string   `json:"sunshineHost"`
 	Forwards     []string `json:"forwards"`
-	Uptime       int64    `json:"uptimeSeconds"`
+	// UDPPorts are the console's UDP ports reachable from the tailnet.
+	UDPPorts []uint16 `json:"udpPorts"`
+	Uptime   int64    `json:"uptimeSeconds"`
 }
 
 func (d *daemon) serveWeb(ln net.Listener) {
@@ -139,6 +141,10 @@ func (d *daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	info.SunshineHost = d.cfg.SunshineHost
 	d.mu.Unlock()
+	info.UDPPorts = []uint16{}
+	if d.udp != nil {
+		info.UDPPorts = append(info.UDPPorts, d.udp.activePorts()...)
+	}
 	info.Forwards = []string{}
 	for _, r := range d.fwd.rules() {
 		info.Forwards = append(info.Forwards, r.String())

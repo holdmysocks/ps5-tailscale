@@ -7,7 +7,6 @@ import (
 	"net"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -152,144 +151,11 @@ func (f *forwarder) serveTCP(c net.Conn, r forwardRule) {
 	pipe(c, up)
 }
 
-// UDP flows that have been silent this long are forgotten.
-const udpIdleTimeout = 2 * time.Minute
-
-// udpFlow is the relay state for one local client address.
-type udpFlow struct {
-	out      chan []byte // datagrams from the client waiting to go upstream
-	lastSeen atomic.Int64
-}
-
-func (fl *udpFlow) touch() { fl.lastSeen.Store(time.Now().UnixNano()) }
-
-func (fl *udpFlow) idle() bool {
-	return time.Since(time.Unix(0, fl.lastSeen.Load())) > udpIdleTimeout
-}
-
 func (f *forwarder) startUDP(r forwardRule) (stop func(), err error) {
-	pc, err := net.ListenPacket("udp", r.Listen)
-	if err != nil {
-		return nil, err
-	}
-	var (
-		mu      sync.Mutex
-		current = pc
-		closed  bool
-		flows   = map[string]*udpFlow{}
-	)
-	socket := func() (net.PacketConn, bool) {
-		mu.Lock()
-		defer mu.Unlock()
-		return current, closed
-	}
-
-	go func() {
-		buf := make([]byte, 65535)
-		for {
-			sock, stopped := socket()
-			if stopped {
-				return
-			}
-			n, from, err := sock.ReadFrom(buf)
-			if err != nil {
-				if _, stopped := socket(); stopped {
-					return
-				}
-				// Like TCP listeners, a UDP socket can die when the
-				// PS5's network is reconfigured. Open a new one.
-				f.logf("forward %v: %v; reopening", r, err)
-				sock.Close()
-				time.Sleep(time.Second)
-				if reopened, err := net.ListenPacket("udp", r.Listen); err == nil {
-					mu.Lock()
-					if closed {
-						reopened.Close()
-					} else {
-						current = reopened
-					}
-					mu.Unlock()
-				}
-				continue
-			}
-
-			key := from.String()
-			mu.Lock()
-			fl := flows[key]
-			if fl == nil {
-				fl = &udpFlow{out: make(chan []byte, 256)}
-				flows[key] = fl
-				go f.serveUDPFlow(r, fl, from, socket, func() {
-					mu.Lock()
-					if flows[key] == fl {
-						delete(flows, key)
-					}
-					mu.Unlock()
-				})
-			}
-			mu.Unlock()
-
-			fl.touch()
-			select {
-			case fl.out <- append([]byte(nil), buf[:n]...):
-			default: // upstream is not keeping up; UDP may drop
-			}
-		}
-	}()
-
-	return func() {
-		mu.Lock()
-		closed = true
-		current.Close()
-		mu.Unlock()
-	}, nil
-}
-
-// serveUDPFlow relays one client's datagrams to the target and the replies
-// back, until the flow goes quiet or the forward is stopped.
-func (f *forwarder) serveUDPFlow(r forwardRule, fl *udpFlow, client net.Addr, socket func() (net.PacketConn, bool), done func()) {
-	defer done()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	up, err := f.dial(ctx, "udp", r.Target)
-	cancel()
-	if err != nil {
-		f.logf("forward %v: %v", r, err)
-		return
-	}
-	defer up.Close()
-
-	// Replies: target -> client.
-	go func() {
-		buf := make([]byte, 65535)
-		for {
-			up.SetReadDeadline(time.Now().Add(udpIdleTimeout))
-			n, err := up.Read(buf)
-			if err != nil {
-				var ne net.Error
-				if errors.As(err, &ne) && ne.Timeout() && !fl.idle() {
-					continue
-				}
-				return
-			}
-			fl.touch()
-			if pc, closed := socket(); !closed {
-				pc.WriteTo(buf[:n], client)
-			}
-		}
-	}()
-
-	idle := time.NewTicker(udpIdleTimeout / 4)
-	defer idle.Stop()
-	for {
-		select {
-		case b := <-fl.out:
-			if _, err := up.Write(b); err != nil {
-				return
-			}
-		case <-idle.C:
-			if _, closed := socket(); closed || fl.idle() {
-				return
-			}
-		}
-	}
+	return startUDPRelay(udpRelayConfig{
+		name:   "forward " + r.String(),
+		listen: func() (net.PacketConn, error) { return net.ListenPacket("udp", r.Listen) },
+		dial:   func(ctx context.Context) (net.Conn, error) { return f.dial(ctx, "udp", r.Target) },
+		logf:   f.logf,
+	})
 }

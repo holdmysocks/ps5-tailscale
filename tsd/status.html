@@ -161,6 +161,7 @@ async function refresh() {
   if (s.ips.length) row(dl, 'Tailnet address', s.ips.join(', '), true);
   if (s.tailnet) row(dl, 'Tailnet', s.tailnet);
   if (s.proxy) row(dl, 'HTTP proxy', s.proxy, true);
+  if (s.ips.length) row(dl, 'Reachable from tailnet', 'every open TCP port' + (s.udpPorts.length ? '; UDP ' + s.udpPorts.join(', ') + ' (Remote Play)' : ''));
 
   const health = $('health');
   health.replaceChildren(...(s.health || []).map(h => { const li = document.createElement('li'); li.textContent = h; return li; }));

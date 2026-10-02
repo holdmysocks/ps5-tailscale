@@ -27,6 +27,13 @@ specification.
 - Inbound: tsnet's fallback TCP handler pipes each tailnet connection to
   `127.0.0.1:<same port>`. It dials the local port before accepting, so
   ports with no listener are refused properly.
+- Inbound UDP (`inboundudp.go`): tsnet has no catch-all for UDP, so the ports
+  in `udpPorts` are listened on with `tsnet.Server.ListenPacket` on the
+  node's tailnet addresses and relayed to `127.0.0.1`. The default list is
+  PS5 Remote Play's (9295, 9296, 9297, 9302); its service answers clients
+  that arrive from loopback. Both UDP directions share `udprelay.go`: one
+  connection to the target per client address, dropped after two idle
+  minutes.
 - Outbound: local forwards (`localforward.go`) listen on localhost and relay
   TCP and UDP to a tailnet host through `tsnet.Server.Dial`. UDP is relayed
   per client address with an idle timeout. The Sunshine setting is a preset

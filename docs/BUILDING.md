@@ -52,7 +52,7 @@ These folders are not in the repository.
 
 ```powershell
 # daemon payload: C launcher + Go program -> out\tailscale.elf
-.\tools\build-payload.ps1 -GoDir tsd -Name tailscale -Version 0.3.0
+.\tools\build-payload.ps1 -GoDir tsd -Name tailscale -Version 0.4.0
 
 # installer -> out\tailscale-installer.elf (embeds out\tailscale.elf)
 .\tools\build-installer.ps1

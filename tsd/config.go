@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"slices"
 )
 
 // config is read from /data/tailscale/config.json. Every field is optional.
@@ -28,6 +29,10 @@ type config struct {
 	// Forwards are extra local forwards: a localhost port on the console
 	// relayed to a host on the tailnet.
 	Forwards []forwardRule `json:"forwards,omitempty"`
+	// UDPPorts lists the console's UDP ports that are reachable from the
+	// tailnet. The default is what PS5 Remote Play uses. An empty list turns
+	// inbound UDP off.
+	UDPPorts []uint16 `json:"udpPorts"`
 	// BlockedPorts lists local TCP ports that are never exposed to the tailnet.
 	BlockedPorts []uint16 `json:"blockedPorts,omitempty"`
 	// Verbose turns on Tailscale's own (very chatty) logging.
@@ -39,6 +44,7 @@ func defaultConfig() config {
 		Hostname:      "ps5",
 		WebAddr:       ":8090",
 		HTTPProxyAddr: "127.0.0.1:8118",
+		UDPPorts:      slices.Clone(remotePlayUDPPorts),
 	}
 }
 
