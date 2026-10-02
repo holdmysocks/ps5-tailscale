@@ -122,6 +122,9 @@ type daemon struct {
 
 	quit     chan struct{}
 	quitOnce sync.Once
+	// removeDataOnExit is set by Uninstall: delete the data directory once
+	// everything that writes to it has shut down.
+	removeDataOnExit bool
 }
 
 func (d *daemon) run() error {
@@ -204,6 +207,13 @@ func (d *daemon) run() error {
 		d.logf("shutdown timed out")
 	}
 	d.logf("stopped")
+
+	d.mu.Lock()
+	remove := d.removeDataOnExit
+	d.mu.Unlock()
+	if remove {
+		os.RemoveAll(dataDir)
+	}
 	return nil
 }
 

@@ -44,11 +44,18 @@ specification.
 - A payload that is sent again stops the running instance (through the
   status page, or failing that by the pid it recorded) and takes over.
 
-**The installer** (`installer/`, C) embeds `tailscale.elf`. It writes it to
-`/data/tailscale/tailscale.elf`, registers a home screen app whose
-`param.json` has a `deeplinkUri` to the status page, and starts the daemon by
-sending it to the ELF loader on `127.0.0.1:9021`. It does not modify any
-payload autoloader.
+**The icon helper** (`appicon/`, C) is a second, tiny payload embedded in the
+launcher. The first time `tailscale.elf` runs, the launcher sends it to the
+ELF loader on `127.0.0.1:9021`, where it runs as a process of its own,
+registers a home screen app whose `param.json` has a `deeplinkUri` to the
+status page, reports the result and exits. The launcher then writes
+`/data/tailscale/icon-installed` and never does it again. It is a separate
+payload so that the system libraries it needs are never loaded into the
+long-running daemon process, where their threads could receive signals meant
+for the Go runtime.
+
+There is no installer. Nothing is copied anywhere and no payload autoloader
+is touched: the payload is run from wherever the user keeps it.
 
 ## The PS5 as a Go target
 
@@ -143,6 +150,9 @@ browser.
 Linking `libSceAppInstUtil` alone leaves the payload stopped before it runs.
 It needs `-lSceIpmi -lSceAppInstUtil -lSceUserService -lSceSystemService`, in
 that order, as in the SDK's `install_app` sample.
+
+The daemon cannot remove the icon; that is left to the user (Options, then
+Delete, on the home screen).
 
 ## Known problems
 

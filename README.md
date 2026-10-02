@@ -43,38 +43,36 @@ Tested on firmware 13.42 with elfldr 0.26.
 
 ## Install
 
-1. Download `tailscale-installer.elf` from the
-   [latest release](../../releases/latest).
-2. Send it to the console's ELF loader, once. Any payload sender works:
+There is one file, `tailscale.elf`, and it is an ordinary payload: running
+it starts Tailscale.
+
+1. Download `tailscale.elf` from the [latest release](../../releases/latest).
+2. Send it to the console's ELF loader. Any payload sender works:
 
    ```bash
    # Linux / macOS
-   socat -t 60 - TCP:<console-ip>:9021 < tailscale-installer.elf
+   socat -t 60 - TCP:<console-ip>:9021 < tailscale.elf
    ```
 
    ```powershell
    # Windows (script from this repository)
-   .\tools\ps5send.ps1 -File tailscale-installer.elf -PS5Host <console-ip> -Seconds 70
+   .\tools\ps5send.ps1 -File tailscale.elf -PS5Host <console-ip>
    ```
-
-   The installer prints what it does. It:
-   - stores the daemon payload as `/data/tailscale/tailscale.elf`,
-   - adds a **Tailscale** icon to the home screen (media section),
-   - starts Tailscale.
 
 3. Open `http://<console-ip>:8090` on a phone or PC. Scan the QR code or
    follow the link and log in to Tailscale. If your tailnet uses device
    approval, approve the console in the admin console.
 
-The console now has a tailnet address, shown on the status page.
-
-Sending the installer again upgrades and restarts Tailscale. The login is
-kept.
+The console now has a tailnet address, shown on the status page. The first
+run also adds a **Tailscale** icon to the home screen (media section) that
+opens the status page.
 
 Tailscale runs until the console restarts. After a restart and jailbreak,
-send `/data/tailscale/tailscale.elf` (or the installer) to the ELF loader
-again. The installer does not change any payload autoloader; if you use one,
-you can add that file to it yourself.
+send `tailscale.elf` again; the login and settings are kept. If you use a
+payload manager or autoloader, add the file there like any other payload.
+
+To update, use the new `tailscale.elf` in place of the old one. Sending it
+while Tailscale is running replaces the running copy.
 
 ## Using it
 
@@ -215,19 +213,21 @@ Files on the console:
 | `/data/tailscale/state/` | Tailscale's state, including the login. |
 | `/data/tailscale/tailscale.log` | The daemon's log, rotated at 2 MB. |
 | `/data/tailscale/tailscale-debug.log` | Tailscale's detailed log, up to 4 MB plus one older file. |
-| `/data/tailscale/tailscale.elf` | The daemon payload. |
+| `/data/tailscale/icon-installed` | Marks that the home screen icon was added. Delete it to have the icon added again on the next start. |
 | `/user/app/TSCL00001/` | The home screen icon. |
 
 ## Uninstall
 
-Press **Uninstall** on the status page. It deletes the daemon payload and
-stops Tailscale. It asks whether to also log out and delete the saved login.
+Press **Uninstall** on the status page. It logs the console out of your
+tailnet, deletes `/data/tailscale` (login, settings, logs) and stops
+Tailscale.
 
-Two things are left to do by hand:
+Left to do by hand:
 
 - Delete the home screen icon (Options button, then Delete).
 - Remove the device in the Tailscale admin console.
-- If you added the payload to an autoloader yourself, remove it there.
+- If you added `tailscale.elf` to a payload manager or autoloader, remove it
+  there, or it starts again on the next boot.
 
 ## Troubleshooting
 

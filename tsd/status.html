@@ -239,11 +239,8 @@ $('btn-sunshine').onclick = async () => {
   await act('/api/sunshine?host=' + encodeURIComponent($('sunshine-select').value));
   $('sunshine-select').dataset.signature = '';
 };
-$('btn-uninstall').onclick = () => {
-  if (!confirm('Remove Tailscale from this PS5? It stops now and its payload is deleted.')) return;
-  const purge = confirm('Also log out and delete the saved login?\n\nOK: delete everything.\nCancel: keep the login, so reinstalling reconnects without logging in again.');
-  act('/api/uninstall' + (purge ? '?purge=1' : ''));
-};
+$('btn-uninstall').onclick = () => act('/api/uninstall',
+  'Remove Tailscale from this PS5?\n\nThis logs the console out of your tailnet, deletes its settings and logs, and stops Tailscale.');
 $('logbox').addEventListener('toggle', refresh);
 
 refresh();

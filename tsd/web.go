@@ -302,22 +302,20 @@ func (d *daemon) stop() {
 	d.quitOnce.Do(func() { close(d.quit) })
 }
 
-// handleUninstall removes the installed payload, then stops. With ?purge=1 it
-// first logs the console out of the tailnet and deletes the saved state as
-// well.
+// handleUninstall logs the console out of the tailnet and stops the daemon,
+// which deletes its data directory (login, settings, logs) on the way out.
+// The payload file itself is wherever the user keeps it, and the home screen
+// icon can only be deleted from the home screen.
 func (d *daemon) handleUninstall(w http.ResponseWriter, r *http.Request) {
-	purge := r.URL.Query().Get("purge") == "1"
-	if purge && d.lc != nil {
+	if d.lc != nil {
 		if err := d.lc.Logout(r.Context()); err != nil {
 			d.logf("uninstall: logout: %v", err)
 		}
 	}
-	if err := uninstall(purge); err != nil {
-		d.logf("uninstall: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	d.logf("uninstalled (purge=%v)", purge)
+	d.logf("uninstall requested from the status page")
+	d.mu.Lock()
+	d.removeDataOnExit = true
+	d.mu.Unlock()
 	notify("Tailscale was removed from this PS5.")
 	io.WriteString(w, "uninstalled\n")
 	d.stop()

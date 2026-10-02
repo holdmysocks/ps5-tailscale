@@ -51,18 +51,18 @@ These folders are not in the repository.
 ## Building the payloads
 
 ```powershell
-# daemon payload: C launcher + Go program -> out\tailscale.elf
-.\tools\build-payload.ps1 -GoDir tsd -Name tailscale -Version 0.4.0
-
-# installer -> out\tailscale-installer.elf (embeds out\tailscale.elf)
-.\tools\build-installer.ps1
+# C launcher + Go program + home screen icon helper -> out\tailscale.elf
+.\tools\build-payload.ps1 -GoDir tsd -Name tailscale -Version 0.4.1 -HomeIcon
 ```
+
+`-HomeIcon` also builds `appicon\` into `out\appicon.elf` and embeds it in
+the launcher.
 
 ## Sending to the console
 
 ```powershell
 $env:PS5_HOST = '192.168.1.50'   # your console
-.\tools\ps5send.ps1 -File out\tailscale-installer.elf -Seconds 70
+.\tools\ps5send.ps1 -File out\tailscale.elf
 ```
 
 `ps5send.ps1` prints whatever the payload writes back.

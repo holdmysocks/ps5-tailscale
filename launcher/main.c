@@ -10,6 +10,7 @@
 #include <ps5/kernel.h>
 
 #include "goload.h"
+#include "homeicon.h"
 
 #ifndef GO_IMAGE
 #error "GO_IMAGE must name the Go binary to embed"
@@ -133,6 +134,8 @@ main(int argc, char **argv) {
   kernel_set_ucred_svuid(pid, 0);
   kernel_set_ucred_rgid(pid, 0);
   kernel_set_ucred_svgid(pid, 0);
+
+  home_icon_install_once();
 
   if (leave_realtime_class()) {
     /* Without this a runaway goroutine could hang the console, so do not
