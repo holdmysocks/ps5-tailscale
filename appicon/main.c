@@ -6,7 +6,11 @@
  * ELF loader the first time Tailscale runs. It is a separate payload so that
  * the system libraries it needs are never loaded into the daemon's process.
  *
- * Prints "icon: ok" on success; the launcher looks for that.
+ * The same payload removes the icon again when its mode byte says so (see
+ * icon_mode below); the daemon uses that for Uninstall.
+ *
+ * Prints "icon: ok" or "icon: removed" on success; the launcher and the
+ * daemon look for that.
  *
  * Build with -DASSET_DIR="path/to/appicon" and link, in this order,
  * -lSceIpmi -lSceAppInstUtil -lSceUserService -lSceSystemService (with
@@ -47,6 +51,37 @@ INCASSET(icon_png, ASSET_DIR "/icon0.png")
 int sceAppInstUtilInitialize(void);
 int sceAppInstUtilTerminate(void);
 int sceAppInstUtilAppInstallAll(void *);
+int sceAppInstUtilAppUnInstall(const char *);
+
+/* What to do. A payload sent to the ELF loader gets no arguments, so the
+ * mode is a byte in the file itself: the daemon changes the character after
+ * the '=' to 'R' before sending the helper when it wants the icon removed
+ * (see tsd/homeicon.go). It is volatile so that the compiler reads it at run
+ * time instead of baking the install branch in. */
+volatile char icon_mode[] = "TSICON-MODE=I";
+
+static int
+remove_icon(void) {
+  int err;
+
+  if ((err = sceAppInstUtilInitialize())) {
+    printf("icon: sceAppInstUtilInitialize failed: 0x%08x\n", err);
+    return 1;
+  }
+  err = sceAppInstUtilAppUnInstall(TITLE_ID);
+  sceAppInstUtilTerminate();
+  /* Whatever the system left behind of the folder goes too. */
+  unlink(APP_DIR "/sce_sys/param.json");
+  unlink(APP_DIR "/sce_sys/icon0.png");
+  rmdir(APP_DIR "/sce_sys");
+  rmdir(APP_DIR);
+  if (err) {
+    printf("icon: removing the app failed: 0x%08x\n", err);
+    return 1;
+  }
+  printf("icon: removed\n");
+  return 0;
+}
 
 static int
 write_file(const char *path, const uint8_t *data, size_t size) {
@@ -111,6 +146,10 @@ main(void) {
   kernel_set_ucred_svuid(pid, 0);
   kernel_set_ucred_rgid(pid, 0);
   kernel_set_ucred_svgid(pid, 0);
+
+  if (icon_mode[sizeof(icon_mode) - 2] == 'R') {
+    return remove_icon();
+  }
 
   if (file_matches(APP_DIR "/sce_sys/param.json", param_json, param_size) &&
       file_matches(APP_DIR "/sce_sys/icon0.png", icon_png, icon_size)) {

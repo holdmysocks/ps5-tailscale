@@ -14,6 +14,11 @@
 #ifndef HTTP_PATH
 #define HTTP_PATH "/hello.txt"
 #endif
+/* Sunshine's "port" setting on the host under test; its HTTP port is this
+ * and its video (UDP) port is this plus 9. */
+#ifndef BASE_PORT
+#define BASE_PORT 47989
+#endif
 
 static struct sockaddr_in
 local(int port) {
@@ -42,12 +47,12 @@ main(void) {
   setvbuf(stdout, 0, _IONBF, 0);
 
   /* TCP */
-  addr = local(47989);
+  addr = local(BASE_PORT);
   fd = socket(AF_INET, SOCK_STREAM, 0);
   setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
   double t0 = now();
   if (connect(fd, (struct sockaddr *)&addr, sizeof(addr))) {
-    printf("tcp 127.0.0.1:47989: cannot connect (no forward listening)\n");
+    printf("tcp 127.0.0.1:%d: cannot connect (no forward listening)\n", BASE_PORT);
   } else {
     const char *req = "GET " HTTP_PATH " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
     size_t total = 0;
@@ -59,9 +64,9 @@ main(void) {
     char *body = strstr(buf, "\r\n\r\n");
     char *eol = strstr(buf, "\r\n");
     if (!total) {
-      printf("tcp 127.0.0.1:47989: connected but no response\n");
+      printf("tcp 127.0.0.1:%d: connected but no response\n", BASE_PORT);
     } else {
-      printf("tcp 127.0.0.1:47989: %.*s (%.0f ms)\n", eol ? (int)(eol - buf) : 60, buf, (now() - t0) * 1000);
+      printf("tcp 127.0.0.1:%d: %.*s (%.0f ms)\n", BASE_PORT, eol ? (int)(eol - buf) : 60, buf, (now() - t0) * 1000);
       if (body) {
         printf("  body: %.400s\n", body + 4);
       }
@@ -71,7 +76,7 @@ main(void) {
 
 #ifndef SKIP_UDP
   /* UDP */
-  addr = local(47998);
+  addr = local(BASE_PORT + 9);
   fd = socket(AF_INET, SOCK_DGRAM, 0);
   setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
   int ok = 0;
@@ -90,7 +95,7 @@ main(void) {
       }
     }
   }
-  printf("udp 127.0.0.1:47998: %d/20 datagrams of 1300 bytes echoed, worst round trip %.1f ms\n", ok, worst);
+  printf("udp 127.0.0.1:%d: %d/20 datagrams of 1300 bytes echoed, worst round trip %.1f ms\n", BASE_PORT + 9, ok, worst);
   close(fd);
 #endif
   return 0;

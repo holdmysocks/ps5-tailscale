@@ -83,9 +83,10 @@ want, for example FTP on 2121 or the payload loader on 9021.
 
 - Every TCP port that something on the console listens on is forwarded.
   Ports with no listener refuse the connection.
-- UDP ports have to be listed, in `udpPorts` in the
-  [configuration](#configuration). The default list is Remote Play's.
-- To keep a TCP port off the tailnet, add it to `blockedPorts`.
+- UDP ports have to be listed, under **Settings** on the status page. The
+  default list is Remote Play's.
+- To keep a TCP port off the tailnet, list it under "TCP ports never
+  exposed" in the settings.
 
 ### Remote Play
 
@@ -108,20 +109,32 @@ ports on the console's tailnet addresses and relays them to the service.
 
 Notes:
 
-- The video passes through the daemon, which runs at the lowest priority so
-  that it never takes time from a game. Under a demanding game that may show
-  as stutter.
-- Waking the console from rest mode does not work: nothing is running then.
+- The video passes through the daemon, which by default runs at the lowest
+  priority so that it never takes time from a game. If the stream stutters
+  under a demanding game, set **Priority** to High in the settings and start
+  Tailscale again.
+- Waking the console from rest mode does not work: nothing runs while it
+  sleeps, so it is not on the tailnet then. Tailscale carries on by itself
+  once the console is awake again.
 
 ### The status page
 
 `http://<console address>:8090`, on the LAN or over the tailnet, or the
 **Tailscale** icon on the home screen. It shows the connection state, the
-login link, and your devices, and has controls for game streaming, logging
-out, stopping and uninstalling.
+login link and your devices, and has the game streaming hosts, the settings,
+and buttons for logging out, stopping and uninstalling. It also says when a
+newer release is available.
 
-It has **no password**, like the console's other homebrew services. Anyone on
-your LAN, or on your tailnet if your ACLs allow it, can use it.
+**Password.** Out of the box the page has no password, like the console's
+other homebrew services: anyone on your LAN, or on your tailnet if your ACLs
+allow it, can use it. Set one under **Settings**. It is then asked for on
+every device except the console itself. If you forget it, delete the
+`passwordHash` line from `/data/tailscale/config.json`.
+
+**Settings.** The name on the tailnet, the password, which UDP ports are
+reachable and which TCP ports are not, extra forwards, the HTTP proxy, the
+priority, and update checks. Most take effect when saved; the page says which
+ones need Tailscale to be started again.
 
 ### Game streaming (Moonlight to Sunshine)
 
@@ -130,29 +143,35 @@ else, over Tailscale.
 
 On the PC:
 
-1. Install [Sunshine](https://github.com/LizardByte/Sunshine) and leave it on
-   its default port (47989).
+1. Install [Sunshine](https://github.com/LizardByte/Sunshine).
 2. Install Tailscale and log in to the same tailnet as the console.
 
 On the console:
 
 1. Open the status page and find **Game streaming**.
-2. Choose the device that runs Sunshine and press **Save**. The page shows
-   "Forwarding 127.0.0.1 to *your-pc* (7 ports)".
+2. Press **Add a host**, enter the device that runs Sunshine and press
+   **Save**. The page then shows what to enter in Moonlight.
 3. In your Moonlight client on the PS5, add a host manually with the address
    **`127.0.0.1`**. Do not enter the PC's tailnet address: the client cannot
    reach it.
 4. Pair as usual: the client shows a PIN, which you enter in Sunshine's web
    interface on the PC.
 
-How it works: the daemon listens on `127.0.0.1` on Sunshine's ports (TCP
-47984, 47989, 48010 and UDP 47998, 47999, 48000, 48002) and relays them to
-the chosen host through Tailscale. To the Moonlight client the Sunshine host
-appears to be the console itself.
+How it works: the daemon listens on `127.0.0.1` on Sunshine's ports (by
+default TCP 47984, 47989, 48010 and UDP 47998, 47999, 48000, 48002) and
+relays them to the host through Tailscale. To the Moonlight client the
+Sunshine host appears to be the console itself.
+
+More than one host, or a host that does not use the default port:
+
+- If a host's Sunshine is set to another port (Sunshine's "Port" setting),
+  enter that port next to the host. In Moonlight, add `127.0.0.1:<port>`.
+- Several hosts can be forwarded at once, but they all appear on
+  `127.0.0.1`, so each needs its own port: give every host a different port
+  in Sunshine, at least 30 apart (for example 47989 and 48989).
 
 Notes:
 
-- One Sunshine host at a time. Change it on the status page at any time.
 - A wired connection on the console helps, as with any streaming.
 - **Do not change the console's network (Wi-Fi to Ethernet, connection
   settings) while a stream is running.** That froze the test console once;
@@ -161,33 +180,43 @@ Notes:
 
 ### Other apps on the console
 
-`forwards` in the [configuration](#configuration) relays any localhost port
-to a tailnet host in the same way, TCP or UDP.
+"Extra forwards" in the settings relay any localhost port to a tailnet host
+in the same way, TCP or UDP. One per line, for example
+`tcp 127.0.0.1:8096 my-nas:8096`.
 
-The daemon also runs an HTTP proxy on `127.0.0.1:8118` that reaches tailnet
-hosts, for apps that have their own proxy setting. **Do not set it as the
-PS5's system proxy.** The system then sends everything through it, including
-pages on `127.0.0.1`, and it is not running until Tailscale has been loaded.
-On the test console that stopped another homebrew tool's page from opening.
+The daemon can also run an HTTP proxy that reaches tailnet hosts, for apps
+that have their own proxy setting. It is off unless you give it an address in
+the settings (for example `127.0.0.1:8118`). **Do not set it as the PS5's
+system proxy.** The system then sends everything through it, including pages
+on `127.0.0.1`, and it is not running until Tailscale has been loaded. On the
+test console that stopped another homebrew tool's page from opening.
 
 ## Configuration
 
-`/data/tailscale/config.json` is created on first start. Every field is
-optional. Restart Tailscale (send the payload again) to apply edits.
+Use **Settings** on the status page. The settings are stored in
+`/data/tailscale/config.json`, which can also be edited by hand; start
+Tailscale again (send the payload) to apply hand edits. Every field is
+optional.
 
 ```json
 {
   "hostname": "ps5",
   "authKey": "",
   "webAddr": ":8090",
-  "httpProxyAddr": "127.0.0.1:8118",
+  "passwordHash": "",
+  "httpProxyAddr": "",
   "controlURL": "",
-  "sunshineHost": "",
+  "sunshineHosts": [
+    {"host": "gaming-pc"},
+    {"host": "office-pc", "port": 48989}
+  ],
   "forwards": [
     {"proto": "tcp", "listen": "127.0.0.1:8096", "target": "my-nas:8096"}
   ],
   "udpPorts": [9295, 9296, 9297, 9302],
   "blockedPorts": [],
+  "priority": "",
+  "checkUpdates": true,
   "verbose": false
 }
 ```
@@ -195,14 +224,17 @@ optional. Restart Tailscale (send the payload again) to apply edits.
 | Field | Meaning |
 | --- | --- |
 | `hostname` | The console's name on the tailnet. |
-| `authKey` | A Tailscale auth key, to log in without the browser step. |
+| `authKey` | A Tailscale auth key, to log in without the browser step. File only. |
 | `webAddr` | Where the status page listens. |
-| `httpProxyAddr` | Where the HTTP proxy listens. Empty turns it off. |
-| `controlURL` | A coordination server other than Tailscale's. |
-| `sunshineHost` | The Sunshine host; set from the status page. |
+| `passwordHash` | The status page's password, hashed. Set it on the status page; delete the field to remove a forgotten password. |
+| `httpProxyAddr` | Where the HTTP proxy listens. Empty, the default, is off. |
+| `controlURL` | A coordination server other than Tailscale's. File only. |
+| `sunshineHosts` | The Sunshine hosts and, where it is not 47989, their port. |
 | `forwards` | Extra local forwards: `proto` is `tcp` or `udp`, `listen` a localhost address, `target` a tailnet host and port. |
 | `udpPorts` | The console's UDP ports reachable from the tailnet. Default `[9295, 9296, 9297, 9302]` (Remote Play). `[]` turns inbound UDP off. |
 | `blockedPorts` | Local TCP ports that are never exposed to the tailnet. |
+| `priority` | `"high"` lets the daemon compete with games for CPU time; anything else is the default, low. Applied when Tailscale starts. |
+| `checkUpdates` | Ask GitHub twice a day whether a newer release exists, to show it on the status page. Nothing is downloaded. |
 | `verbose` | Put Tailscale's own log in the main log as well. |
 
 Files on the console:
@@ -214,17 +246,17 @@ Files on the console:
 | `/data/tailscale/tailscale.log` | The daemon's log, rotated at 2 MB. |
 | `/data/tailscale/tailscale-debug.log` | Tailscale's detailed log, up to 4 MB plus one older file. |
 | `/data/tailscale/icon-installed` | Marks that the home screen icon was added. Delete it to have the icon added again on the next start. |
+| `/data/tailscale/icon-helper.elf` | The small payload that adds and removes the icon. |
 | `/user/app/TSCL00001/` | The home screen icon. |
 
 ## Uninstall
 
-Press **Uninstall** on the status page. It logs the console out of your
-tailnet, deletes `/data/tailscale` (login, settings, logs) and stops
-Tailscale.
+Press **Uninstall** on the status page. It removes the home screen icon, logs
+the console out of your tailnet, deletes `/data/tailscale` (login, settings,
+logs) and stops Tailscale.
 
 Left to do by hand:
 
-- Delete the home screen icon (Options button, then Delete).
 - Remove the device in the Tailscale admin console.
 - If you added `tailscale.elf` to a payload manager or autoloader, remove it
   there, or it starts again on the next boot.
@@ -234,41 +266,58 @@ Left to do by hand:
 - **The status page does not open on the console, but does from a PC.**
   Check that the PS5's proxy server setting is "Do Not Use".
 - **The Moonlight client cannot find the host.** The host to add is
-  `127.0.0.1`, and a Sunshine host must be selected on the status page.
-  Sunshine must be on its default port.
+  `127.0.0.1` (or `127.0.0.1:<port>` for a host on another port), and the
+  Sunshine host must be listed on the status page with the port its Sunshine
+  uses.
 - **"Not logged in" after logging in.** Press **Log in again** for a fresh
   link.
+- **Forgot the status page password.** Delete the `passwordHash` line from
+  `/data/tailscale/config.json` and start Tailscale again, or use the page on
+  the console itself, where no password is asked.
 - **Something else.** `http://<console>:8090/api/logs?full=1` is the daemon's
   log and `/api/logs?debug=1` is Tailscale's detailed log. Please attach them
   to bug reports, after checking them for anything you consider private.
 
 ## Security
 
-- The status page and its controls are unauthenticated.
+- The status page and its controls have no password until you set one. With
+  a password, only the console itself gets in without it. The page is served
+  over plain HTTP: on the LAN the password travels unencrypted, over the
+  tailnet Tailscale encrypts it.
 - All listening TCP ports on the console, and the UDP ports in `udpPorts`,
   become reachable from your tailnet. That includes the payload loader, which
   runs anything sent to it. Use Tailscale ACLs if other people share your
-  tailnet.
-- The local forwards and the proxy listen on `127.0.0.1` only and are not
-  exposed to the tailnet.
+  tailnet, or list ports under "TCP ports never exposed".
+- The local forwards and the proxy are for the console's own apps and are
+  not exposed to the tailnet.
+- With update checks on, the console contacts `api.github.com` twice a day.
 
 ## Resource use
 
-About 60 MB of memory and next to no CPU when idle. The daemon runs at the
-lowest scheduling priority on at most 4 cores, so it gives way to games.
+About 60 MB of memory and next to no CPU when idle. By default the daemon
+runs at the lowest scheduling priority on at most 4 cores, so it gives way to
+games. With the priority set to High it shares those cores with games on
+equal terms.
 
 ## What has and has not been tested
 
-Tested on the one console: install and upgrade, login with device approval,
+Tested on the one console: first run and upgrade, login with device approval,
 starting again after a reboot with the saved login, reaching the console over
 the tailnet, a ProsperoLight stream from a Sunshine host through the forward,
-the HTTP proxy, the home screen icon.
+two forwarded hosts on different ports (with a stand-in for the second), the
+HTTP proxy, adding and removing the home screen icon, the password from the
+LAN and the tailnet, changing settings from the page, both priority settings,
+the update check, a short stay in rest mode (about a minute: the same process
+carried on and was back on the tailnet within a second of waking).
 
 Remote Play through the tailnet address works with Chiaki and with Asobi on
 iOS and Android.
 
-Not tested: rest mode, Uninstall on a console, other firmware versions,
-coordination servers other than Tailscale's.
+Not tested: hours in rest mode, switching between Wi-Fi and Ethernet while
+running, the complete Uninstall
+on a console (its parts were tested separately), whether High priority
+improves Remote Play, a real Sunshine host on a non-default port, other
+firmware versions, coordination servers other than Tailscale's.
 
 ## Building
 

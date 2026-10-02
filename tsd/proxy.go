@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -52,7 +53,9 @@ func (d *daemon) serveProxy(ln net.Listener) {
 			io.Copy(w, resp.Body)
 		}),
 	}
-	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed && !d.stopping() {
+	// Serve returns when the listener is closed, which is how the proxy is
+	// turned off or moved from the settings.
+	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed && !errors.Is(err, net.ErrClosed) && !d.stopping() {
 		d.logf("http proxy stopped: %v", err)
 	}
 }

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tailscale on PS5</title>
+<link rel="icon" type="image/png" href="/favicon.png">
 <style>
   :root {
     --bg: #f4f5f7; --panel: #ffffff; --text: #1c1e21; --muted: #646a73;
@@ -22,9 +23,11 @@
   }
   main { max-width: 720px; margin: 0 auto; }
   h1 { font-size: 22px; margin: 0 0 4px; }
-  h2 { font-size: 15px; margin: 0 0 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  h2, summary .heading { font-size: 15px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  h2 { margin: 0 0 12px; }
   .sub { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; margin-bottom: 16px; }
+  .banner { border-color: var(--accent); }
   .state { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 600; }
   .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--muted); flex: none; }
   .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
@@ -36,28 +39,37 @@
   .login img { width: 240px; height: 240px; image-rendering: pixelated; background: #fff; padding: 8px; border-radius: 8px; }
   .login .url { display: block; margin: 12px 0 4px; font-size: 18px; overflow-wrap: anywhere; }
   .msg { color: var(--bad); margin: 12px 0 0; overflow-wrap: anywhere; }
+  .okmsg { color: var(--ok); margin: 12px 0 0; overflow-wrap: anywhere; }
   .health { color: var(--warn); margin: 12px 0 0; padding-left: 18px; }
   table { width: 100%; border-collapse: collapse; font-size: 15px; }
   th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 8px 8px 0; }
   td { padding: 7px 8px 7px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
   td.off { color: var(--muted); }
-  .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
   button {
     font: inherit; padding: 9px 16px; border-radius: 8px; border: 1px solid var(--line);
     background: var(--panel); color: var(--text); cursor: pointer;
   }
   button:hover { border-color: var(--accent); }
-  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   button.danger { color: var(--bad); }
+  button.small { padding: 6px 10px; font-size: 14px; }
   pre { margin: 0; max-height: 320px; overflow: auto; font: 12.5px/1.45 ui-monospace, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
   details summary { cursor: pointer; color: var(--muted); }
+  summary .count { font-size: 14px; margin-left: 8px; }
+  details[open] > table, details[open] > form { margin-top: 12px; }
   .note { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
-  .field { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--muted); }
-  select {
+  .hint { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+  label.field { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--muted); margin-bottom: 14px; }
+  label.check { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  input[type=text], input[type=password], input[type=number], select, textarea {
     font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
-    background: var(--panel); color: var(--text); min-width: 220px;
+    background: var(--panel); color: var(--text); width: 100%;
   }
-  .actions { align-items: flex-end; }
+  textarea { font: 14px ui-monospace, Consolas, monospace; min-height: 70px; resize: vertical; }
+  .hostrow { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+  .hostrow .host { flex: 3; min-width: 0; }
+  .hostrow .port { flex: 1; min-width: 90px; }
   .hidden { display: none; }
 </style>
 </head>
@@ -66,6 +78,22 @@
   <h1>Tailscale on PS5</h1>
   <p class="sub" id="version"></p>
 
+  <section class="panel banner hidden" id="updatepanel">
+    <strong id="updatetext"></strong>
+    <a id="updatelink" target="_blank" rel="noopener">Release notes and download</a>
+  </section>
+
+  <section class="panel hidden" id="lockpanel">
+    <h2>Password</h2>
+    <p class="note">This status page is password protected.</p>
+    <form id="lockform" class="actions">
+      <input type="password" id="lockpw" autocomplete="current-password" aria-label="Password" style="max-width: 280px">
+      <button type="submit">Unlock</button>
+    </form>
+    <p class="msg hidden" id="lockmsg"></p>
+  </section>
+
+  <div id="content" class="hidden">
   <section class="panel">
     <div class="state"><span class="dot" id="dot"></span><span id="state">Loading…</span></div>
     <dl id="facts"></dl>
@@ -81,25 +109,76 @@
   </section>
 
   <section class="panel hidden" id="peerpanel">
-    <h2>Devices on your tailnet</h2>
-    <table>
-      <thead><tr><th>Name</th><th>Address</th><th>OS</th><th>Status</th></tr></thead>
-      <tbody id="peers"></tbody>
-    </table>
+    <details id="peerbox" open>
+      <summary><span class="heading">Devices on your tailnet</span><span class="count" id="peercount"></span></summary>
+      <table>
+        <thead><tr><th>Name</th><th>Address</th><th>OS</th><th>Status</th></tr></thead>
+        <tbody id="peers"></tbody>
+      </table>
+    </details>
   </section>
 
   <section class="panel hidden" id="streampanel">
     <h2>Game streaming (Moonlight to Sunshine)</h2>
-    <p class="note">Apps on the PS5 cannot reach tailnet addresses directly. Pick the device that runs Sunshine and its
-      streaming ports are made available on this console. Then, in your Moonlight client on the PS5 (for example
-      ProsperoLight), add the host <code>127.0.0.1</code>.</p>
+    <p class="note">Apps on the PS5 cannot reach tailnet addresses directly. List the devices that run Sunshine and
+      their streaming ports are made available on this console. In your Moonlight client on the PS5 (for example
+      ProsperoLight), add the address shown for each host.</p>
+    <div id="hostrows"></div>
+    <datalist id="peernames"></datalist>
     <div class="actions">
-      <label class="field">Sunshine host
-        <select id="sunshine-select"></select>
-      </label>
+      <button id="btn-addhost" class="small">Add a host</button>
       <button id="btn-sunshine">Save</button>
     </div>
-    <p class="note" id="sunshine-state"></p>
+    <p class="hint">Port is Sunshine's own port setting; leave it empty for the default (47989). Two hosts need
+      different ports.</p>
+    <p class="note" id="sunshine-state" style="margin: 12px 0 0"></p>
+  </section>
+
+  <section class="panel">
+    <details id="settingsbox">
+      <summary><span class="heading">Settings</span></summary>
+      <form id="settingsform">
+        <label class="field">Name on the tailnet
+          <input type="text" id="set-hostname" maxlength="63" autocomplete="off">
+        </label>
+        <label class="field">Password for this page <span id="set-pwstate"></span>
+          <input type="password" id="set-password" autocomplete="new-password" placeholder="Leave empty to keep it as it is">
+          <span class="hint">Asked on every device except the console itself. If you forget it, delete
+            <code>passwordHash</code> from <code>/data/tailscale/config.json</code>.</span>
+        </label>
+        <label class="check hidden" id="set-pwremove-row"><input type="checkbox" id="set-pwremove"> Remove the password</label>
+        <label class="field">UDP ports reachable from the tailnet
+          <input type="text" id="set-udp" autocomplete="off">
+          <span class="hint">Comma separated. 9295, 9296, 9297, 9302 are Remote Play's. Empty turns inbound UDP off.</span>
+        </label>
+        <label class="field">TCP ports never exposed to the tailnet
+          <input type="text" id="set-blocked" autocomplete="off">
+          <span class="hint">Comma separated. Every other open TCP port on the console is reachable.</span>
+        </label>
+        <label class="field">Extra forwards from the console to tailnet hosts
+          <textarea id="set-forwards" spellcheck="false"></textarea>
+          <span class="hint">One per line: <code>tcp 127.0.0.1:8096 my-nas:8096</code> (protocol, local address, tailnet host and port).</span>
+        </label>
+        <label class="field">HTTP proxy address
+          <input type="text" id="set-proxy" autocomplete="off" placeholder="Off">
+          <span class="hint">Empty is off. Example: <code>127.0.0.1:8118</code>. Do not set it as the PS5's system proxy.</span>
+        </label>
+        <label class="field">Priority
+          <select id="set-priority">
+            <option value="low">Low: never takes time from a game (default)</option>
+            <option value="high">High: shares the CPU with games; smoother Remote Play</option>
+          </select>
+        </label>
+        <label class="field">Status page address
+          <input type="text" id="set-webaddr" autocomplete="off">
+        </label>
+        <label class="check"><input type="checkbox" id="set-updates"> Check GitHub for new releases</label>
+        <label class="check"><input type="checkbox" id="set-verbose"> Verbose log</label>
+        <div class="actions"><button type="submit">Save settings</button></div>
+        <p class="okmsg hidden" id="settingsok"></p>
+        <p class="msg hidden" id="settingsmsg"></p>
+      </form>
+    </details>
   </section>
 
   <section class="panel">
@@ -109,16 +188,19 @@
       <button id="btn-logout" class="danger">Log out</button>
       <button id="btn-quit" class="danger">Stop Tailscale</button>
       <button id="btn-uninstall" class="danger">Uninstall</button>
+      <button id="btn-lock" class="hidden">Lock this page</button>
     </div>
+    <p class="okmsg hidden" id="actionok"></p>
     <p class="msg hidden" id="actionmsg"></p>
   </section>
 
   <section class="panel">
     <details id="logbox">
-      <summary>Recent log</summary>
+      <summary><span class="heading">Recent log</span></summary>
       <pre id="logs"></pre>
     </details>
   </section>
+  </div>
 </main>
 
 <script>
@@ -132,6 +214,30 @@ const labels = {
   Running: ['Connected', 'ok'],
 };
 let shownQR = '';
+let hostsDirty = false;   // the user is editing the Sunshine hosts
+let lastHosts = '';
+
+// api performs a request to the daemon. A 401 means the page is locked.
+async function api(path, options) {
+  options = options || {};
+  options.cache = 'no-store';
+  options.headers = Object.assign({'X-PS5-Tailscale': '1'}, options.headers || {});
+  const r = await fetch(path, options);
+  if (r.status === 401) { showLocked(true); throw new Error('locked'); }
+  return r;
+}
+
+function showLocked(locked) {
+  $('lockpanel').classList.toggle('hidden', !locked);
+  $('content').classList.toggle('hidden', locked);
+  if (locked) $('updatepanel').classList.add('hidden');
+}
+
+function show(id, text) {
+  const el = $(id);
+  el.textContent = text || '';
+  el.classList.toggle('hidden', !text);
+}
 
 function row(dl, name, value, mono) {
   const dt = document.createElement('dt'); dt.textContent = name;
@@ -141,34 +247,59 @@ function row(dl, name, value, mono) {
   dl.append(dt, dd);
 }
 
+function hostRow(host, port) {
+  const div = document.createElement('div');
+  div.className = 'hostrow';
+  const h = document.createElement('input');
+  h.type = 'text'; h.className = 'host'; h.placeholder = 'Device name or address'; h.value = host || '';
+  h.setAttribute('list', 'peernames'); h.setAttribute('aria-label', 'Sunshine host'); h.autocomplete = 'off';
+  const p = document.createElement('input');
+  p.type = 'number'; p.className = 'port'; p.placeholder = '47989'; p.min = 1029; p.max = 65514;
+  p.value = port && port !== 47989 ? port : ''; p.setAttribute('aria-label', 'Sunshine port');
+  const x = document.createElement('button');
+  x.type = 'button'; x.className = 'small'; x.textContent = 'Remove';
+  x.onclick = () => { div.remove(); hostsDirty = true; };
+  h.oninput = p.oninput = () => { hostsDirty = true; };
+  div.append(h, p, x);
+  return div;
+}
+
 async function refresh() {
   let s;
   try {
-    s = await (await fetch('/api/status', {cache: 'no-store'})).json();
+    s = await (await api('/api/status')).json();
   } catch (e) {
-    $('state').textContent = 'Not responding';
-    $('dot').className = 'dot bad';
+    if (e.message !== 'locked') {
+      $('state').textContent = 'Not responding';
+      $('dot').className = 'dot bad';
+    }
     return;
   }
+  showLocked(false);
   const [label, cls] = labels[s.state] || [s.state, 'warn'];
   $('state').textContent = label;
   $('dot').className = 'dot ' + cls;
   $('version').textContent = 'ps5-tailscale ' + s.version;
+
+  $('updatepanel').classList.toggle('hidden', !s.latestVersion);
+  if (s.latestVersion) {
+    $('updatetext').textContent = 'Version ' + s.latestVersion + ' is available. ';
+    $('updatelink').href = s.updateURL;
+  }
 
   const dl = $('facts');
   dl.replaceChildren();
   row(dl, 'Name', s.dnsName || s.hostname);
   if (s.ips.length) row(dl, 'Tailnet address', s.ips.join(', '), true);
   if (s.tailnet) row(dl, 'Tailnet', s.tailnet);
-  if (s.proxy) row(dl, 'HTTP proxy', s.proxy, true);
   if (s.ips.length) row(dl, 'Reachable from tailnet', 'every open TCP port' + (s.udpPorts.length ? '; UDP ' + s.udpPorts.join(', ') + ' (Remote Play)' : ''));
+  if (s.proxy) row(dl, 'HTTP proxy', s.proxy, true);
+  if (s.priority === 'high') row(dl, 'Priority', 'High');
 
   const health = $('health');
   health.replaceChildren(...(s.health || []).map(h => { const li = document.createElement('li'); li.textContent = h; return li; }));
   health.classList.toggle('hidden', !(s.health || []).length);
-
-  $('error').textContent = s.error || '';
-  $('error').classList.toggle('hidden', !s.error);
+  show('error', s.error);
 
   const needLogin = !!s.authURL;
   $('login').classList.toggle('hidden', !needLogin);
@@ -190,58 +321,151 @@ async function refresh() {
     return tr;
   }));
   $('peerpanel').classList.toggle('hidden', !s.peers.length);
+  $('peercount').textContent = s.peers.filter(p => p.online).length + ' online of ' + s.peers.length;
 
-  // Game streaming: offer the tailnet's devices, keep the user's selection
-  // while they are choosing.
-  $('streampanel').classList.toggle('hidden', s.state !== 'Running' && !s.sunshineHost);
-  const sel = $('sunshine-select');
-  const options = ['', ...s.peers.map(p => p.name)];
-  if (s.sunshineHost && !options.includes(s.sunshineHost)) options.push(s.sunshineHost);
-  const signature = options.join('|') + '#' + s.sunshineHost;
-  if (sel.dataset.signature !== signature && document.activeElement !== sel) {
-    sel.replaceChildren(...options.map(name => {
-      const o = document.createElement('option');
-      o.value = name;
-      const peer = s.peers.find(p => p.name === name);
-      o.textContent = name === '' ? 'None (off)' : name + (peer && !peer.online ? ' (offline)' : '');
-      return o;
-    }));
-    sel.value = s.sunshineHost;
-    sel.dataset.signature = signature;
+  // Game streaming. The rows are only rebuilt from the daemon's state while
+  // the user is not in the middle of editing them.
+  $('streampanel').classList.toggle('hidden', s.state !== 'Running' && !s.sunshineHosts.length);
+  $('peernames').replaceChildren(...s.peers.map(p => { const o = document.createElement('option'); o.value = p.name; return o; }));
+  const hostsNow = JSON.stringify(s.sunshineHosts);
+  if (!hostsDirty && hostsNow !== lastHosts) {
+    lastHosts = hostsNow;
+    $('hostrows').replaceChildren(...s.sunshineHosts.map(h => hostRow(h.host, h.port)));
   }
-  $('sunshine-state').textContent = s.sunshineHost
-    ? 'Forwarding 127.0.0.1 to ' + s.sunshineHost + ' (' + s.forwards.length + ' ports).'
-    : 'Off.';
+  $('sunshine-state').textContent = s.sunshineHosts.length
+    ? s.sunshineHosts.map(h => h.host + ': add ' + h.address + ' in Moonlight').join('. ') + '.'
+    : 'No Sunshine host is forwarded.';
+
+  $('btn-lock').classList.toggle('hidden', !s.passwordSet);
 
   if ($('logbox').open) {
-    try { $('logs').textContent = await (await fetch('/api/logs', {cache: 'no-store'})).text(); } catch (e) {}
+    try { $('logs').textContent = await (await api('/api/logs')).text(); } catch (e) {}
   }
 }
 
-async function act(path, confirmText) {
+async function act(path, confirmText, body) {
   if (confirmText && !confirm(confirmText)) return;
-  const msg = $('actionmsg');
-  msg.classList.add('hidden');
+  show('actionmsg', ''); show('actionok', '');
   try {
-    const r = await fetch(path, {method: 'POST', headers: {'X-PS5-Tailscale': '1'}});
-    if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+    const options = {method: 'POST'};
+    if (body !== undefined) { options.body = JSON.stringify(body); options.headers = {'Content-Type': 'application/json'}; }
+    const r = await api(path, options);
+    const text = (await r.text()).trim();
+    if (!r.ok) throw new Error(text || r.statusText);
+    return text;
   } catch (e) {
-    msg.textContent = e.message;
-    msg.classList.remove('hidden');
+    if (e.message !== 'locked') show('actionmsg', e.message);
+  } finally {
+    refresh();
   }
-  refresh();
 }
 
 $('btn-login').onclick = () => act('/api/login');
 $('btn-logout').onclick = () => act('/api/logout', 'Log this PS5 out of your tailnet?');
 $('btn-quit').onclick = () => act('/api/quit', 'Stop Tailscale on this PS5? Send the payload again to start it.');
-$('btn-sunshine').onclick = async () => {
-  await act('/api/sunshine?host=' + encodeURIComponent($('sunshine-select').value));
-  $('sunshine-select').dataset.signature = '';
+$('btn-uninstall').onclick = async () => {
+  const text = await act('/api/uninstall',
+    'Remove Tailscale from this PS5?\n\nThis removes the home screen icon, logs the console out of your tailnet, deletes its settings and logs, and stops Tailscale.');
+  if (text) show('actionok', text);
 };
-$('btn-uninstall').onclick = () => act('/api/uninstall',
-  'Remove Tailscale from this PS5?\n\nThis logs the console out of your tailnet, deletes its settings and logs, and stops Tailscale.');
+$('btn-lock').onclick = async () => { await act('/api/lock'); showLocked(true); };
+
+$('lockform').onsubmit = async ev => {
+  ev.preventDefault();
+  show('lockmsg', '');
+  const r = await fetch('/api/auth', {
+    method: 'POST',
+    headers: {'X-PS5-Tailscale': '1', 'Content-Type': 'application/json'},
+    body: JSON.stringify({password: $('lockpw').value}),
+  });
+  if (!r.ok) { show('lockmsg', r.status === 403 ? 'Wrong password.' : (await r.text()).trim()); return; }
+  $('lockpw').value = '';
+  refresh();
+};
+
+// Game streaming hosts.
+$('btn-addhost').onclick = () => { $('hostrows').append(hostRow('', 0)); hostsDirty = true; };
+$('btn-sunshine').onclick = async () => {
+  const hosts = [];
+  for (const div of $('hostrows').children) {
+    const host = div.querySelector('.host').value.trim();
+    const port = parseInt(div.querySelector('.port').value, 10) || 0;
+    if (host) hosts.push({host: host, port: port});
+  }
+  hostsDirty = false; lastHosts = '';
+  await act('/api/sunshine', '', hosts);
+};
+
+// Settings.
+const ports = text => text.split(/[\s,]+/).filter(x => x).map(x => parseInt(x, 10));
+async function loadSettings() {
+  let c;
+  try { c = await (await api('/api/config')).json(); } catch (e) { return; }
+  $('set-hostname').value = c.hostname;
+  $('set-pwstate').textContent = c.passwordSet ? '(set)' : '(not set)';
+  $('set-password').value = '';
+  $('set-pwremove').checked = false;
+  $('set-pwremove-row').classList.toggle('hidden', !c.passwordSet);
+  $('set-udp').value = c.udpPorts.join(', ');
+  $('set-blocked').value = c.blockedPorts.join(', ');
+  $('set-forwards').value = c.forwards.map(f => f.proto + ' ' + f.listen + ' ' + f.target).join('\n');
+  $('set-proxy').value = c.httpProxyAddr;
+  $('set-priority').value = c.priority;
+  $('set-webaddr').value = c.webAddr;
+  $('set-updates').checked = c.checkUpdates;
+  $('set-verbose').checked = c.verbose;
+}
+$('settingsbox').addEventListener('toggle', () => { if ($('settingsbox').open) loadSettings(); });
+if (location.hash === '#settings') $('settingsbox').open = true;
+$('settingsform').onsubmit = async ev => {
+  ev.preventDefault();
+  show('settingsmsg', ''); show('settingsok', '');
+  const udp = ports($('set-udp').value), blocked = ports($('set-blocked').value);
+  if (udp.concat(blocked).some(p => !(p >= 1 && p <= 65535))) { show('settingsmsg', 'Ports must be numbers from 1 to 65535.'); return; }
+  const forwards = [];
+  for (const line of $('set-forwards').value.split('\n').map(l => l.trim()).filter(l => l)) {
+    const parts = line.split(/\s+/);
+    if (parts.length !== 3) { show('settingsmsg', 'Each forward needs three parts: protocol, local address, target. Problem: ' + line); return; }
+    forwards.push({proto: parts[0].toLowerCase(), listen: parts[1], target: parts[2]});
+  }
+  const c = {
+    hostname: $('set-hostname').value.trim(),
+    webAddr: $('set-webaddr').value.trim(),
+    httpProxyAddr: $('set-proxy').value.trim(),
+    forwards: forwards,
+    udpPorts: udp,
+    blockedPorts: blocked,
+    priority: $('set-priority').value,
+    checkUpdates: $('set-updates').checked,
+    verbose: $('set-verbose').checked,
+  };
+  if ($('set-pwremove').checked) c.password = '';
+  else if ($('set-password').value) c.password = $('set-password').value;
+  try {
+    const r = await api('/api/config', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(c)});
+    if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+    const reply = await r.json();
+    let text = 'Saved.';
+    if (reply.restart && reply.restart.length) text += ' Takes effect when Tailscale is started again: ' + reply.restart.join(', ') + '.';
+    show('settingsok', text);
+    if (reply.problems && reply.problems.length) show('settingsmsg', reply.problems.join(' '));
+    loadSettings();
+    refresh();
+  } catch (e) {
+    if (e.message !== 'locked') show('settingsmsg', e.message);
+  }
+};
+
 $('logbox').addEventListener('toggle', refresh);
+
+// The device list can be long. Remember whether it was left collapsed; the
+// browser may not allow storage, in which case it simply starts open.
+try {
+  if (localStorage.getItem('peersCollapsed') === '1') $('peerbox').open = false;
+} catch (e) {}
+$('peerbox').addEventListener('toggle', () => {
+  try { localStorage.setItem('peersCollapsed', $('peerbox').open ? '0' : '1'); } catch (e) {}
+});
 
 refresh();
 setInterval(refresh, 3000);

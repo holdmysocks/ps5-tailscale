@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -48,18 +49,23 @@ type udpRelay struct {
 	sock   net.PacketConn
 	closed bool
 	flows  map[string]*udpFlow
+
+	ended atomic.Bool // the read loop has returned
 }
 
 // startUDPRelay opens the listening socket and relays until stop is called.
-func startUDPRelay(cfg udpRelayConfig) (stop func(), err error) {
+func startUDPRelay(cfg udpRelayConfig) (*udpRelay, error) {
 	sock, err := cfg.listen()
 	if err != nil {
 		return nil, err
 	}
 	r := &udpRelay{cfg: cfg, sock: sock, flows: map[string]*udpFlow{}}
 	go r.readLoop()
-	return r.stop, nil
+	return r, nil
 }
+
+// running reports whether the relay is still reading from its socket.
+func (r *udpRelay) running() bool { return !r.ended.Load() }
 
 func (r *udpRelay) stop() {
 	r.mu.Lock()
@@ -77,6 +83,7 @@ func (r *udpRelay) socket() (net.PacketConn, bool) {
 }
 
 func (r *udpRelay) readLoop() {
+	defer r.ended.Store(true)
 	buf := make([]byte, 65535)
 	for {
 		sock, stopped := r.socket()
@@ -86,6 +93,11 @@ func (r *udpRelay) readLoop() {
 		n, from, err := sock.ReadFrom(buf)
 		if err != nil {
 			if _, stopped := r.socket(); stopped {
+				return
+			}
+			if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+				// Whatever provided the socket has shut down (Tailscale
+				// stopping, for one). There is nothing to reopen.
 				return
 			}
 			r.cfg.logf("%s: %v; reopening", r.cfg.name, err)

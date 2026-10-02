@@ -18,10 +18,15 @@ import (
 //go:embed status.html
 var statusHTML []byte
 
-// The status page has no login: like the other services on a jailbroken
-// console it trusts the local network. State-changing requests must carry
-// this header, which a web page on another origin cannot send, so a stray
-// link or image tag cannot log the console out.
+// faviconPNG is the logo from the home screen icon (appicon/icon0.png)
+// without its text, 128x128, for the browser tab.
+//
+//go:embed favicon.png
+var faviconPNG []byte
+
+// State-changing requests must carry this header, which a web page on
+// another origin cannot send, so a stray link or image tag cannot log the
+// console out. Who may use the page at all is decided in auth.go.
 const apiHeader = "X-PS5-Tailscale"
 
 type peerInfo struct {
@@ -29,6 +34,14 @@ type peerInfo struct {
 	IP     string `json:"ip"`
 	OS     string `json:"os"`
 	Online bool   `json:"online"`
+}
+
+// sunshineInfo is a forwarded Sunshine host as the status page shows it.
+type sunshineInfo struct {
+	Host string `json:"host"`
+	Port int    `json:"port"`
+	// Address is what to enter in a Moonlight client on the console.
+	Address string `json:"address"`
 }
 
 type statusInfo struct {
@@ -43,50 +56,66 @@ type statusInfo struct {
 	Health   []string   `json:"health,omitempty"`
 	Peers    []peerInfo `json:"peers"`
 	Proxy    string     `json:"proxy,omitempty"`
-	// SunshineHost and Forwards describe the local forwards.
-	SunshineHost string   `json:"sunshineHost"`
-	Forwards     []string `json:"forwards"`
+	// SunshineHosts and Forwards describe the local forwards.
+	SunshineHosts []sunshineInfo `json:"sunshineHosts"`
+	Forwards      []string       `json:"forwards"`
 	// UDPPorts are the console's UDP ports reachable from the tailnet.
 	UDPPorts []uint16 `json:"udpPorts"`
-	Uptime   int64    `json:"uptimeSeconds"`
+	Priority string   `json:"priority"`
+	// PasswordSet says whether the page is password protected.
+	PasswordSet bool `json:"passwordSet"`
+	// LatestVersion and UpdateURL are set when a newer release exists.
+	LatestVersion string `json:"latestVersion,omitempty"`
+	UpdateURL     string `json:"updateURL,omitempty"`
+	Uptime        int64  `json:"uptimeSeconds"`
 }
 
-func (d *daemon) serveWeb(ln net.Listener) {
+// webHandler builds the status page and its API.
+func (d *daemon) webHandler() http.Handler {
 	mux := http.NewServeMux()
+
+	// Open to everyone who can reach the page: the page itself (which shows
+	// nothing until its API answers), the icon, and what a new instance
+	// needs to recognise this one.
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Write(statusHTML)
 	})
+	favicon := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "max-age=86400")
+		w.Write(faviconPNG)
+	}
+	mux.HandleFunc("GET /favicon.png", favicon)
+	mux.HandleFunc("GET /favicon.ico", favicon) // what browsers ask for unprompted
 	mux.HandleFunc("GET /api/ping", func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, "ps5-tailscale "+version+"\n")
 	})
-	mux.HandleFunc("GET /api/status", d.handleStatus)
-	mux.HandleFunc("GET /api/logs", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		switch {
-		case r.URL.Query().Get("full") == "1":
-			// The end of the log file itself.
-			writeFileTail(w, filepath.Join(dataDir, "tailscale.log"), 512<<10)
-			return
-		case r.URL.Query().Get("debug") == "1":
-			// The end of the debug log, which includes Tailscale's own messages.
-			writeFileTail(w, filepath.Join(dataDir, "tailscale-debug.log"), 1<<20)
-			return
-		case r.URL.Query().Get("debug") == "old":
-			writeFileTail(w, filepath.Join(dataDir, "tailscale-debug.log.old"), 1<<20)
-			return
-		}
-		io.WriteString(w, strings.Join(recentLogs.snapshot(), "\n")+"\n")
-	})
-	mux.HandleFunc("GET /qr.png", d.handleQR)
-	mux.HandleFunc("POST /api/login", d.guard(d.handleLogin))
-	mux.HandleFunc("POST /api/logout", d.guard(d.handleLogout))
-	mux.HandleFunc("POST /api/quit", d.guard(d.handleQuit))
-	mux.HandleFunc("POST /api/uninstall", d.guard(d.handleUninstall))
-	mux.HandleFunc("POST /api/sunshine", d.guard(d.handleSunshine))
+	mux.HandleFunc("POST /api/auth", d.guard(d.handleAuth))
+	mux.HandleFunc("POST /api/lock", d.guard(d.handleLock))
 
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	// Everything else needs the password, if one is set.
+	mux.HandleFunc("GET /api/status", d.protect(d.handleStatus))
+	mux.HandleFunc("GET /api/logs", d.protect(d.handleLogs))
+	mux.HandleFunc("GET /qr.png", d.protect(d.handleQR))
+	mux.HandleFunc("GET /api/config", d.protect(d.handleGetConfig))
+	for path, h := range map[string]http.HandlerFunc{
+		"/api/config":    d.handleSetConfig,
+		"/api/login":     d.handleLogin,
+		"/api/logout":    d.handleLogout,
+		"/api/quit":      d.handleQuit,
+		"/api/uninstall": d.handleUninstall,
+		"/api/sunshine":  d.handleSunshine,
+	} {
+		mux.HandleFunc("POST "+path, d.protect(d.guard(h)))
+	}
+	return mux
+}
+
+// serveWeb serves the status page on one listener.
+func (d *daemon) serveWeb(ln net.Listener, h http.Handler) {
+	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed && !d.stopping() {
 		d.logf("web UI stopped: %v", err)
 	}
@@ -126,20 +155,47 @@ func (d *daemon) guard(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+func (d *daemon) handleLogs(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	switch {
+	case r.URL.Query().Get("full") == "1":
+		// The end of the log file itself.
+		writeFileTail(w, filepath.Join(dataDir, "tailscale.log"), 512<<10)
+	case r.URL.Query().Get("debug") == "1":
+		// The end of the debug log, which includes Tailscale's own messages.
+		writeFileTail(w, filepath.Join(dataDir, "tailscale-debug.log"), 1<<20)
+	case r.URL.Query().Get("debug") == "old":
+		writeFileTail(w, filepath.Join(dataDir, "tailscale-debug.log.old"), 1<<20)
+	default:
+		io.WriteString(w, strings.Join(recentLogs.snapshot(), "\n")+"\n")
+	}
+}
+
 func (d *daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	info := statusInfo{
-		Version:  version,
-		State:    d.state,
-		AuthURL:  d.authURL,
-		Error:    d.lastErr,
-		Hostname: d.cfg.Hostname,
-		Proxy:    d.cfg.HTTPProxyAddr,
-		Uptime:   int64(time.Since(d.started).Seconds()),
-		IPs:      []string{},
-		Peers:    []peerInfo{},
+		Version:       version,
+		State:         d.state,
+		AuthURL:       d.authURL,
+		Error:         d.lastErr,
+		Hostname:      d.cfg.Hostname,
+		Proxy:         d.cfg.HTTPProxyAddr,
+		Priority:      priorityLow,
+		PasswordSet:   d.cfg.PasswordHash != "",
+		Uptime:        int64(time.Since(d.started).Seconds()),
+		IPs:           []string{},
+		Peers:         []peerInfo{},
+		SunshineHosts: []sunshineInfo{},
 	}
-	info.SunshineHost = d.cfg.SunshineHost
+	if d.cfg.Priority == priorityHigh {
+		info.Priority = priorityHigh
+	}
+	for _, h := range d.cfg.SunshineHosts {
+		info.SunshineHosts = append(info.SunshineHosts, sunshineInfo{Host: h.Host, Port: h.basePort(), Address: h.clientAddress()})
+	}
+	if newerVersion(version, d.latest.Version) {
+		info.LatestVersion, info.UpdateURL = d.latest.Version, d.latest.URL
+	}
 	d.mu.Unlock()
 	info.UDPPorts = []uint16{}
 	if d.udp != nil {
@@ -254,23 +310,32 @@ func (d *daemon) handleLogout(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, "ok\n")
 }
 
-// handleSunshine sets (or with an empty host, clears) the Sunshine host whose
-// streaming ports are forwarded from 127.0.0.1, saves the config and applies
-// it without a restart.
+// handleSunshine replaces the list of Sunshine hosts whose streaming ports are
+// forwarded from 127.0.0.1, saves the config and applies it at once.
 func (d *daemon) handleSunshine(w http.ResponseWriter, r *http.Request) {
-	host := strings.TrimSpace(r.URL.Query().Get("host"))
-	if !validHostName(host) {
-		http.Error(w, "that does not look like a host name or address", http.StatusBadRequest)
+	var hosts []sunshineHost
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&hosts); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	for i := range hosts {
+		hosts[i].Host = strings.TrimSpace(hosts[i].Host)
+		if hosts[i].Port == sunshineDefaultPort {
+			hosts[i].Port = 0
+		}
+	}
+	if err := validateSunshineHosts(hosts); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	d.mu.Lock()
-	d.cfg.SunshineHost = host
+	d.cfg.SunshineHosts = hosts
 	cfg := d.cfg
 	d.mu.Unlock()
 	if err := saveConfig(d.cfgPath, cfg); err != nil {
 		d.logf("saving config: %v", err)
 	}
-	d.logf("sunshine host set to %q", host)
+	d.logf("sunshine hosts set to %v", hosts)
 	if err := d.fwd.set(d.localForwardRules()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -302,28 +367,34 @@ func (d *daemon) stop() {
 	d.quitOnce.Do(func() { close(d.quit) })
 }
 
-// handleUninstall logs the console out of the tailnet and stops the daemon,
-// which deletes its data directory (login, settings, logs) on the way out.
-// The payload file itself is wherever the user keeps it, and the home screen
-// icon can only be deleted from the home screen.
+// handleUninstall takes the home screen icon away, logs the console out of
+// the tailnet and stops the daemon, which deletes its data directory (login,
+// settings, logs) on the way out. The payload file itself is wherever the
+// user keeps it.
 func (d *daemon) handleUninstall(w http.ResponseWriter, r *http.Request) {
+	d.logf("uninstall requested from the status page")
+	iconNote := "The home screen icon was removed."
+	if err := removeHomeIcon(); err != nil {
+		d.logf("uninstall: home screen icon: %v", err)
+		iconNote = "The home screen icon could not be removed (" + err.Error() + "); delete it from the home screen."
+	}
 	if d.lc != nil {
 		if err := d.lc.Logout(r.Context()); err != nil {
 			d.logf("uninstall: logout: %v", err)
 		}
 	}
-	d.logf("uninstall requested from the status page")
 	d.mu.Lock()
 	d.removeDataOnExit = true
 	d.mu.Unlock()
 	notify("Tailscale was removed from this PS5.")
-	io.WriteString(w, "uninstalled\n")
+	io.WriteString(w, "Tailscale was removed from this PS5. "+iconNote+"\n")
 	d.stop()
 }
 
 // stopRunningInstance asks an instance that is already serving the status
 // page to exit and waits for the port to become free. It reports whether
-// there was one.
+// there was one. The request comes from the console itself, so it needs no
+// password.
 func stopRunningInstance(webAddr string) bool {
 	_, port, err := net.SplitHostPort(webAddr)
 	if err != nil {

@@ -48,9 +48,10 @@ main(void) {
     int stray = ki->ki_pid >= MIN_PID && ki->ki_pid != self && !strcmp(tdname, "payload.elf");
     if (ki->ki_pid >= MIN_PID - 40 || stray) {
 #endif
-      printf("%6d %-20s %-20s rss=%ldMB threads=%d cpu=%.2fs stat=%d wait=%.8s%s\n", ki->ki_pid, ki->ki_comm,
-             tdname, (long)(ki->ki_rssize * 16384L >> 20), ki->ki_numthreads, ki->ki_runtime / 1e6, (int)ki->ki_stat,
-             ki->ki_wmesg, stray ? "  <- killing" : "");
+      printf("%6d %-20s %-20s rss=%ldMB threads=%d cpu=%.2fs stat=%d wait=%.8s sched=%d/%d%s\n", ki->ki_pid,
+             ki->ki_comm, tdname, (long)(ki->ki_rssize * 16384L >> 20), ki->ki_numthreads, ki->ki_runtime / 1e6,
+             (int)ki->ki_stat, ki->ki_wmesg, (int)ki->ki_pri.pri_class, (int)ki->ki_pri.pri_user,
+             stray ? "  <- killing" : "");
     }
     if (stray) {
       if (kill(ki->ki_pid, SIGKILL)) {

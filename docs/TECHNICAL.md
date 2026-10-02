@@ -36,11 +36,29 @@ specification.
   minutes.
 - Outbound: local forwards (`localforward.go`) listen on localhost and relay
   TCP and UDP to a tailnet host through `tsnet.Server.Dial`. UDP is relayed
-  per client address with an idle timeout. The Sunshine setting is a preset
-  of seven such forwards.
-- A status page and small JSON API on port 8090, an HTTP proxy on
-  `127.0.0.1:8118`, PS5 notifications by writing a request to
+  per client address with an idle timeout. Each Sunshine host is a preset of
+  seven such forwards on the ports that host really uses, derived from
+  Sunshine's port setting (HTTPS -5, HTTP +0, RTSP +21, video +9, control
+  +10, audio +11, microphone +13). The ports cannot be remapped, because the
+  host tells the Moonlight client which ports to use; several hosts can only
+  coexist on 127.0.0.1 if their Sunshine ports differ.
+- A status page and JSON API on port 8090 (`web.go`, `settings.go`), an
+  optional HTTP proxy, PS5 notifications by writing a request to
   `/dev/notification0`.
+- Password (`auth.go`): PBKDF2-SHA256 hash in the config, session cookie,
+  one attempt per second. Requests from loopback are exempt. For that to be
+  safe, connections for the status page that arrive over the tailnet are not
+  piped to localhost like other ports but handed to the page's HTTP server
+  directly, so it sees the tailnet address.
+- Settings are applied live where possible. The launcher needs one of them,
+  the priority, before any Go code runs, so the daemon leaves it in
+  `/data/tailscale/priority` for the next start.
+- Update notice (`update.go`): the latest release tag from the GitHub API,
+  twice a day, compared with the running version.
+- When a listener reports that it had to reopen its socket (the PS5's
+  network was reconfigured), the daemon asks Tailscale to rebind and re-STUN
+  instead of waiting for its interface polling. See [Rest mode](#rest-mode)
+  for the one time this has been seen.
 - A payload that is sent again stops the running instance (through the
   status page, or failing that by the pid it recorded) and takes over.
 
@@ -53,6 +71,12 @@ status page, reports the result and exits. The launcher then writes
 payload so that the system libraries it needs are never loaded into the
 long-running daemon process, where their threads could receive signals meant
 for the Go runtime.
+
+The same helper removes the icon (`sceAppInstUtilAppUnInstall`). A payload
+sent to the ELF loader gets no arguments, so the mode is a byte in the file
+after the marker `TSICON-MODE=`. The launcher leaves a copy of the helper in
+`/data/tailscale/icon-helper.elf`; for Uninstall the daemon flips that byte
+and sends it to the loader (`tsd/homeicon.go`).
 
 There is no installer. Nothing is copied anywhere and no payload autoloader
 is touched: the payload is run from wherever the user keeps it.
@@ -140,6 +164,32 @@ works across cores (4 spinning goroutines, 5 garbage collections in about
 350 ms). Test builds can add a watchdog thread that kills the process after
 a fixed time (`build-payload.ps1 -Watchdog`).
 
+The "high" priority setting uses class 2 (round-robin) at priority 700
+instead: equal to games and system threads, but equal-priority round-robin
+threads take turns. With it, the same test passes (5 collections in about
+300 ms) and the console stays responsive: the status page answered within
+60 ms throughout while four goroutines spun.
+
+## Rest mode
+
+Observed once, for a rest of about a minute on Ethernet. The process is not
+killed: it is frozen with the rest of the console and continues afterwards.
+
+- Going to sleep, the network is taken down first. Every socket fails with
+  errno 163 at the same moment: the status page listener, Tailscale's relay
+  connection and its connection to the coordination server. The listener
+  reopened at once, the daemon asked for a rebind, and Tailscale saw "all
+  links down" and paused.
+- Nothing is logged while the console sleeps, and it is not reachable on the
+  tailnet.
+- On waking, Tailscale's monitor noticed the jump in the clock, rebound its
+  sockets, reconnected to its relay and had its endpoints back within about
+  300 ms. The status page, forwarded TCP ports and the Remote Play UDP ports
+  answered through the tailnet address afterwards without anything being
+  restarted.
+
+A rest of hours has not been tried, nor one on Wi-Fi.
+
 ## Home screen icon
 
 `/user/app/TSCL00001/sce_sys/param.json` with `applicationCategoryType` 65536
@@ -150,9 +200,6 @@ browser.
 Linking `libSceAppInstUtil` alone leaves the payload stopped before it runs.
 It needs `-lSceIpmi -lSceAppInstUtil -lSceUserService -lSceSystemService`, in
 that order, as in the SDK's `install_app` sample.
-
-The daemon cannot remove the icon; that is left to the user (Options, then
-Delete, on the home screen).
 
 ## Known problems
 
@@ -165,5 +212,6 @@ Delete, on the home screen).
   request was answered with "auth path not found". The daemon now requests a
   new link when it sees that error; the recovery path has not been observed
   in practice.
-- Whether Tailscale's own UDP sockets recover after a network
-  reconfiguration has not been examined.
+- Tailscale's sockets recovered after rest mode took the network down and
+  brought it back. A change of interface (Wi-Fi to Ethernet or back) while
+  the daemon runs has not been observed since the rebind request was added.

@@ -27,6 +27,7 @@
  * home screen stays deleted. Remove the file to get the icon back. */
 #define ICON_MARKER DATA_DIR "/icon-installed"
 #define ICON_VERSION "1\n"
+#define ICON_HELPER_FILE DATA_DIR "/icon-helper.elf"
 #define LOADER_PORT 9021
 
 extern const uint8_t icon_helper[];
@@ -54,6 +55,30 @@ marker_is_current(void) {
   return !strcmp(buf, ICON_VERSION);
 }
 
+/* Leave a copy of the helper where the daemon can find it. Uninstall runs it
+ * again, switched to removing the icon. */
+static void
+save_helper(void) {
+  size_t size = icon_helper_end - icon_helper;
+  struct stat st;
+  int fd;
+
+  if (!stat(ICON_HELPER_FILE, &st) && (size_t)st.st_size == size) {
+    return;
+  }
+  if ((fd = open(ICON_HELPER_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644)) < 0) {
+    return;
+  }
+  for (size_t done = 0; done < size;) {
+    ssize_t n = write(fd, icon_helper + done, size - done);
+    if (n <= 0) {
+      break;
+    }
+    done += n;
+  }
+  close(fd);
+}
+
 void
 home_icon_install_once(void) {
   struct sockaddr_in addr = {0};
@@ -64,10 +89,11 @@ home_icon_install_once(void) {
   size_t got = 0;
   int fd;
 
+  mkdir(DATA_DIR, 0755);
+  save_helper();
   if (marker_is_current()) {
     return;
   }
-  mkdir(DATA_DIR, 0755);
 
   if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
     return;

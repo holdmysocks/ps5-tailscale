@@ -115,10 +115,16 @@ type daemon struct {
 	lastErr  string
 	notified string // last state the user was notified about
 
-	lastTsnetMsg string
-	proxyPort    uint16 // port of the outbound HTTP proxy, 0 if disabled
-	webPort      uint16 // port of the status page
-	lastRelogin  time.Time
+	lastTsnetMsg  string
+	proxyLn       *resilientListener // the outbound HTTP proxy, nil if disabled
+	proxyPort     uint16             // its port, 0 if disabled
+	webPort       uint16             // port of the status page
+	lastRelogin   time.Time
+	lastNetChange time.Time
+	latest        releaseInfo // newest release known, see update.go
+
+	sessions   sessions         // browsers that have entered the password
+	tailnetWeb *tailnetListener // status page connections arriving over the tailnet
 
 	quit     chan struct{}
 	quitOnce sync.Once
@@ -154,8 +160,13 @@ func (d *daemon) run() error {
 	if err != nil {
 		return fmt.Errorf("web UI: %w", err)
 	}
+	webLn.onReopen = d.networkChanged
 	d.webPort = webLn.port()
-	go d.serveWeb(webLn)
+	d.tailnetWeb = newTailnetListener()
+	handler := d.webHandler()
+	go d.serveWeb(webLn, handler)
+	go d.serveWeb(d.tailnetWeb, handler)
+	d.writePriorityFile()
 
 	if err := d.srv.Start(); err != nil {
 		return fmt.Errorf("starting tailscale: %w", err)
@@ -165,13 +176,8 @@ func (d *daemon) run() error {
 		return fmt.Errorf("local client: %w", err)
 	}
 
-	if d.cfg.HTTPProxyAddr != "" {
-		if ln, err := listenResilient("tcp", d.cfg.HTTPProxyAddr, d.logf); err != nil {
-			d.logf("http proxy: %v", err)
-		} else {
-			d.proxyPort = ln.port()
-			go d.serveProxy(ln)
-		}
+	if err := d.setProxy(d.cfg.HTTPProxyAddr); err != nil {
+		d.logf("http proxy: %v", err)
 	}
 
 	d.fwd.set(d.localForwardRules())
@@ -184,6 +190,7 @@ func (d *daemon) run() error {
 	go d.watch(ctx)
 	go d.recoverLogin(ctx)
 	go d.exposeUDP(ctx)
+	go d.watchForUpdates(ctx)
 
 	sigc := make(chan os.Signal, 1)
 	signal.Notify(sigc, syscall.SIGTERM, syscall.SIGINT)
@@ -195,6 +202,7 @@ func (d *daemon) run() error {
 	}
 	cancel()
 	webLn.Close()
+	d.tailnetWeb.Close()
 
 	done := make(chan struct{})
 	go func() {
@@ -226,7 +234,33 @@ func (d *daemon) dialTailnet(ctx context.Context, network, addr string) (net.Con
 func (d *daemon) localForwardRules() []forwardRule {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return append(sunshineRules(d.cfg.SunshineHost), d.cfg.Forwards...)
+	return append(sunshineRules(d.cfg.SunshineHosts), d.cfg.Forwards...)
+}
+
+// networkChanged is called when a listening socket has died and been
+// reopened, which on the PS5 means the network was reconfigured (connection
+// settings changed, Wi-Fi to Ethernet, ...). Tailscale notices changes by
+// polling the interfaces; this tells it straight away to open fresh sockets
+// and work out its addresses again.
+func (d *daemon) networkChanged() {
+	d.mu.Lock()
+	recent := time.Since(d.lastNetChange) < 10*time.Second
+	d.lastNetChange = time.Now()
+	lc := d.lc
+	d.mu.Unlock()
+	if recent || lc == nil {
+		return
+	}
+	d.logf("the console's network changed; asking Tailscale to rebind")
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		for _, action := range []string{"rebind", "restun"} {
+			if err := lc.DebugAction(ctx, action); err != nil {
+				d.logf("tailscale %s: %v", action, err)
+			}
+		}
+	}()
 }
 
 // exposeUDP keeps the configured UDP ports listening on the console's tailnet

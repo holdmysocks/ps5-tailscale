@@ -35,22 +35,24 @@ type udpExposer struct {
 	mu     sync.Mutex
 	addrs  []netip.Addr
 	ports  []uint16
-	stops  []func()
+	relays []*udpRelay
 	active []uint16
 }
 
 // update makes ports reachable on addrs, replacing whatever was exposed
-// before. It does nothing if neither has changed.
+// before. It does nothing if neither has changed and every relay is still
+// running.
 func (e *udpExposer) update(addrs []netip.Addr, ports []uint16) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if slices.Equal(addrs, e.addrs) && slices.Equal(ports, e.ports) {
+	healthy := !slices.ContainsFunc(e.relays, func(r *udpRelay) bool { return !r.running() })
+	if healthy && slices.Equal(addrs, e.addrs) && slices.Equal(ports, e.ports) {
 		return
 	}
-	for _, stop := range e.stops {
-		stop()
+	for _, r := range e.relays {
+		r.stop()
 	}
-	e.stops, e.active = nil, nil
+	e.relays, e.active = nil, nil
 	e.addrs, e.ports = slices.Clone(addrs), slices.Clone(ports)
 
 	for _, port := range ports {
@@ -62,7 +64,7 @@ func (e *udpExposer) update(addrs []netip.Addr, ports []uint16) {
 				network = "udp6"
 			}
 			listenAddr := netip.AddrPortFrom(addr, port).String()
-			stop, err := startUDPRelay(udpRelayConfig{
+			relay, err := startUDPRelay(udpRelayConfig{
 				name:   "udp " + listenAddr,
 				listen: func() (net.PacketConn, error) { return e.listen(network, listenAddr) },
 				dial: func(ctx context.Context) (net.Conn, error) {
@@ -75,7 +77,7 @@ func (e *udpExposer) update(addrs []netip.Addr, ports []uint16) {
 				e.logf("udp %s: %v", listenAddr, err)
 				continue
 			}
-			e.stops = append(e.stops, stop)
+			e.relays = append(e.relays, relay)
 			ok = true
 		}
 		if ok {

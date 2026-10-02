@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 #include <sys/mman.h>
@@ -63,30 +64,48 @@ raw_syscall3(long n, long a, long b, long c) {
  * priority, where nothing this process does can keep the system's own threads
  * off the CPU. Threads created later inherit the setting. The kernel ignores
  * priorities outside its own range without reporting an error, so the result
- * is read back. Round-robin at the lowest priority is the fallback. */
+ * is read back. Round-robin at the lowest priority is the fallback.
+ *
+ * With the "high" priority setting the process instead becomes round-robin
+ * at the default priority: it then competes with games on equal terms, but
+ * equal-priority round-robin threads take turns, so even then a thread that
+ * never blocks cannot shut the others out. */
+static int
+high_priority_requested(void) {
+  char buf[16] = {0};
+  FILE *f = fopen("/data/tailscale/priority", "r");
+
+  if (!f) {
+    return 0;
+  }
+  fgets(buf, sizeof(buf), f);
+  fclose(f);
+  return !strncmp(buf, "high", 4);
+}
+
 static int
 leave_realtime_class(void) {
   static const struct rtprio choices[] = {
+      {RTP_PRIO_REALTIME, PS5_PRIO_DEFAULT}, /* only with the "high" setting */
       {RTP_PRIO_NORMAL, PS5_PRIO_LOWEST},
       {RTP_PRIO_REALTIME, PS5_PRIO_LOWEST},
   };
   struct rtprio before = {0}, after = {0};
+  int ok = 0;
 
   raw_syscall3(SYS_rtprio_thread, RTP_LOOKUP, 0, (long)&before);
-  for (size_t i = 0; i < sizeof(choices) / sizeof(choices[0]); i++) {
+  for (size_t i = high_priority_requested() ? 0 : 1; i < sizeof(choices) / sizeof(choices[0]) && !ok; i++) {
     struct rtprio want = choices[i];
     raw_syscall3(SYS_rtprio_thread, RTP_SET, 0, (long)&want);
     raw_syscall3(SYS_rtprio_thread, RTP_LOOKUP, 0, (long)&after);
-    if (after.type == choices[i].type && after.prio == choices[i].prio) {
-      break;
-    }
+    ok = after.type == choices[i].type && after.prio == choices[i].prio;
   }
 #ifdef GOLOAD_DEBUG
   fprintf(stderr, "launcher: scheduling class %u/%u -> %u/%u\n", before.type, before.prio, after.type, after.prio);
 #else
   (void)before;
 #endif
-  return after.prio > PS5_PRIO_DEFAULT && after.type != before.type ? 0 : -1;
+  return ok ? 0 : -1;
 }
 
 #ifdef GOLOAD_WATCHDOG

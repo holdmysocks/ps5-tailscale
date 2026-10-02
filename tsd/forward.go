@@ -21,7 +21,15 @@ import (
 // rather than a connection that opens and closes.
 func (d *daemon) forwardToLocalhost(src, dst netip.AddrPort) (handler func(net.Conn), intercept bool) {
 	port := dst.Port()
-	if slices.Contains(d.cfg.BlockedPorts, port) || port == d.proxyPort || d.fwd.listensOnTCP(port) {
+	if port == d.webPort {
+		// The status page is served on the tailnet connection itself rather
+		// than through localhost, so that the page sees who is asking.
+		return d.tailnetWeb.deliver, true
+	}
+	d.mu.Lock()
+	blocked := slices.Contains(d.cfg.BlockedPorts, port) || port == d.proxyPort
+	d.mu.Unlock()
+	if blocked || d.fwd.listensOnTCP(port) {
 		// The outbound proxy and the local forwards are for the console's
 		// own apps. Exposing them would let any tailnet device use the
 		// console as a relay.
@@ -40,11 +48,7 @@ func (d *daemon) forwardToLocalhost(src, dst netip.AddrPort) (handler func(net.C
 		if !abandoned.Stop() {
 			return
 		}
-		if port != d.webPort {
-			// The status page polls every few seconds; logging its own
-			// requests would bury everything else.
-			d.logf("forward %v -> localhost:%d", src, port)
-		}
+		d.logf("forward %v -> localhost:%d", src, port)
 		pipe(c, local)
 	}, true
 }

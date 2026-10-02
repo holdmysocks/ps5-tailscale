@@ -134,19 +134,71 @@ func TestLocalForward(t *testing.T) {
 }
 
 func TestSunshineRules(t *testing.T) {
-	if got := sunshineRules(""); got != nil {
-		t.Errorf("no host: got %v", got)
+	if got := sunshineRules(nil); got != nil {
+		t.Errorf("no hosts: got %v", got)
 	}
-	rules := sunshineRules("gaming-pc")
-	if len(rules) != 7 {
-		t.Fatalf("got %d rules, want 7", len(rules))
-	}
-	if got, want := rules[0].String(), "tcp 127.0.0.1:47984 -> gaming-pc:47984"; got != want {
-		t.Errorf("first rule %q, want %q", got, want)
-	}
-	for _, r := range rules {
+
+	// Default port: the well-known Sunshine ports.
+	def := sunshineHost{Host: "gaming-pc"}
+	var got []string
+	for _, r := range def.rules() {
+		got = append(got, r.String())
 		if !strings.HasPrefix(r.Listen, "127.0.0.1:") {
 			t.Errorf("%v does not listen on localhost only", r)
+		}
+	}
+	want := []string{
+		"tcp 127.0.0.1:47984 -> gaming-pc:47984",
+		"tcp 127.0.0.1:47989 -> gaming-pc:47989",
+		"tcp 127.0.0.1:48010 -> gaming-pc:48010",
+		"udp 127.0.0.1:47998 -> gaming-pc:47998",
+		"udp 127.0.0.1:47999 -> gaming-pc:47999",
+		"udp 127.0.0.1:48000 -> gaming-pc:48000",
+		"udp 127.0.0.1:48002 -> gaming-pc:48002",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("default port rules:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if a := def.clientAddress(); a != "127.0.0.1" {
+		t.Errorf("client address %q", a)
+	}
+
+	// A host on another port keeps its own port numbers, shifted as a set.
+	alt := sunshineHost{Host: "office-pc", Port: 48989}
+	if r := alt.rules(); r[0].String() != "tcp 127.0.0.1:48984 -> office-pc:48984" || r[6].String() != "udp 127.0.0.1:49002 -> office-pc:49002" {
+		t.Errorf("custom port rules: %v", r)
+	}
+	if a := alt.clientAddress(); a != "127.0.0.1:48989" {
+		t.Errorf("client address %q", a)
+	}
+	if n := len(sunshineRules([]sunshineHost{def, alt})); n != 14 {
+		t.Errorf("two hosts: %d rules, want 14", n)
+	}
+}
+
+func TestValidateSunshineHosts(t *testing.T) {
+	ok := [][]sunshineHost{
+		nil,
+		{{Host: "gaming-pc"}},
+		{{Host: "gaming-pc"}, {Host: "office-pc", Port: 48989}},
+		{{Host: "100.64.0.2", Port: 50000}},
+	}
+	for _, hosts := range ok {
+		if err := validateSunshineHosts(hosts); err != nil {
+			t.Errorf("%v: unexpected error %v", hosts, err)
+		}
+	}
+	bad := [][]sunshineHost{
+		{{Host: ""}},
+		{{Host: "bad host"}},
+		{{Host: "a"}, {Host: "b"}},                  // same ports
+		{{Host: "a"}, {Host: "b", Port: 47989 + 5}}, // b's HTTPS port is a's HTTP port
+		{{Host: "a", Port: 80}},                     // too low
+		{{Host: "a", Port: 65530}},                  // derived ports past 65535
+	}
+	for _, hosts := range bad {
+		if err := validateSunshineHosts(hosts); err == nil {
+			t.Errorf("%v: expected an error", hosts)
 		}
 	}
 }

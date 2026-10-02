@@ -18,6 +18,8 @@ type resilientListener struct {
 	network string
 	addr    string
 	logf    func(format string, args ...any)
+	// onReopen, if set, is called after the socket had to be reopened.
+	onReopen func()
 
 	mu     sync.Mutex
 	ln     net.Listener
@@ -80,6 +82,9 @@ func (l *resilientListener) reopen() bool {
 		l.ln = ln
 		l.mu.Unlock()
 		l.logf("listener %s: reopened", l.addr)
+		if l.onReopen != nil {
+			l.onReopen()
+		}
 		return true
 	}
 }
