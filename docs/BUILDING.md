@@ -52,7 +52,7 @@ These folders are not in the repository.
 
 ```powershell
 # C launcher + Go program + home screen icon helper -> out\tailscale.elf
-.\tools\build-payload.ps1 -GoDir tsd -Name tailscale -Version 0.4.1 -HomeIcon
+.\tools\build-payload.ps1 -GoDir tsd -Name tailscale -Version 0.5.2 -HomeIcon
 ```
 
 `-HomeIcon` also builds `appicon\` into `out\appicon.elf` and embeds it in

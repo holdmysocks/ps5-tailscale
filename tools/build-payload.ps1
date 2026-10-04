@@ -1,5 +1,5 @@
 # Build a Go program for the PS5 and wrap it in the launcher payload.
-#   .\tools\build-payload.ps1 -GoDir tsd -Name tailscale -Version 0.4.1 -HomeIcon
+#   .\tools\build-payload.ps1 -GoDir tsd -Name tailscale -Version 0.5.2 -HomeIcon
 #   .\tools\build-payload.ps1 -GoDir probe-go -Name probe [-DebugLoader] [-Watchdog 120] [-Send]
 param(
     [Parameter(Mandatory = $true)][string]$GoDir,

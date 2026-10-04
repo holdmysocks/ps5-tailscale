@@ -31,7 +31,14 @@ VPN here. It runs inside one process:
   directly. They can through a *local forward* (see
   [game streaming](#game-streaming-moonlight-to-sunshine) and
   [configuration](#configuration)).
-- No exit node, subnet routing, Tailscale SSH, Taildrop or Funnel.
+- No subnet routing, Tailscale SSH, Taildrop or Funnel.
+- The console cannot use an exit node, and it does not offer itself as one.
+  Offering one is doable (it needs no tunnel device), but the PS5 would make
+  a terrible exit node: every packet would pass through this one low-priority
+  process, so it would be slow, and it would fall away whenever the console
+  goes into rest mode, reboots or loses its jailbreak, taking the internet of
+  every device using it with it. Use a PC, a server or a router on your
+  tailnet instead.
 
 ## Requirements
 

@@ -20,6 +20,14 @@ import (
 // connection is declined, so the peer sees an ordinary "connection refused"
 // rather than a connection that opens and closes.
 func (d *daemon) forwardToLocalhost(src, dst netip.AddrPort) (handler func(net.Conn), intercept bool) {
+	ip4, ip6 := d.srv.TailscaleIPs()
+	if !addressedTo(dst.Addr(), ip4, ip6) {
+		// Only connections to the console's own tailnet addresses are for
+		// its services. Nothing else arrives today, but if this node ever
+		// advertised routes, a connection to any address on a port that is
+		// open here must not end up at the console's service.
+		return nil, false
+	}
 	port := dst.Port()
 	if port == d.webPort {
 		// The status page is served on the tailnet connection itself rather
@@ -51,6 +59,12 @@ func (d *daemon) forwardToLocalhost(src, dst netip.AddrPort) (handler func(net.C
 		d.logf("forward %v -> localhost:%d", src, port)
 		pipe(c, local)
 	}, true
+}
+
+// addressedTo reports whether dst is one of the node's own addresses.
+func addressedTo(dst netip.Addr, own ...netip.Addr) bool {
+	dst = dst.Unmap()
+	return dst.IsValid() && slices.Contains(own, dst)
 }
 
 // pipe copies in both directions until both sides are done.
