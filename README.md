@@ -125,6 +125,13 @@ login link and your devices, and has the game streaming hosts, the settings,
 and buttons for logging out, stopping and uninstalling. It also says when a
 newer release is available.
 
+**Devices.** The list is grouped into your tailnet's devices and devices
+shared with you, and marks the ones that can be used as an exit node. It can
+be searched (name, address, OS, tag, place) and limited to devices that are
+online. If your tailnet has a VPN add-on such as Mullvad, its exit servers
+are counted but kept out of the list until you tick **Show VPN exit
+servers**.
+
 **Password.** Out of the box the page has no password, like the console's
 other homebrew services: anyone on your LAN, or on your tailnet if your ACLs
 allow it, can use it. Set one under **Settings**. It is then asked for on

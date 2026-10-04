@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -29,13 +28,6 @@ var faviconPNG []byte
 // console out. Who may use the page at all is decided in auth.go.
 const apiHeader = "X-PS5-Tailscale"
 
-type peerInfo struct {
-	Name   string `json:"name"`
-	IP     string `json:"ip"`
-	OS     string `json:"os"`
-	Online bool   `json:"online"`
-}
-
 // sunshineInfo is a forwarded Sunshine host as the status page shows it.
 type sunshineInfo struct {
 	Host string `json:"host"`
@@ -55,7 +47,10 @@ type statusInfo struct {
 	Tailnet  string     `json:"tailnet,omitempty"`
 	Health   []string   `json:"health,omitempty"`
 	Peers    []peerInfo `json:"peers"`
-	Proxy    string     `json:"proxy,omitempty"`
+	// VPNServers counts the exit servers of a VPN add-on. They are only in
+	// Peers when the page asks for them (?vpn=1).
+	VPNServers peerCount `json:"vpnServers"`
+	Proxy      string    `json:"proxy,omitempty"`
 	// SunshineHosts and Forwards describe the local forwards.
 	SunshineHosts []sunshineInfo `json:"sunshineHosts"`
 	Forwards      []string       `json:"forwards"`
@@ -225,22 +220,7 @@ func (d *daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 					info.IPs = append(info.IPs, ip.String())
 				}
 			}
-			for _, p := range st.Peer {
-				pi := peerInfo{Name: p.HostName, OS: p.OS, Online: p.Online}
-				if p.DNSName != "" {
-					pi.Name = strings.SplitN(p.DNSName, ".", 2)[0]
-				}
-				if len(p.TailscaleIPs) > 0 {
-					pi.IP = p.TailscaleIPs[0].String()
-				}
-				info.Peers = append(info.Peers, pi)
-			}
-			sort.Slice(info.Peers, func(i, j int) bool {
-				if info.Peers[i].Online != info.Peers[j].Online {
-					return info.Peers[i].Online
-				}
-				return info.Peers[i].Name < info.Peers[j].Name
-			})
+			info.Peers, info.VPNServers = peersFromStatus(st, r.URL.Query().Get("vpn") == "1")
 		}
 	}
 	if info.State == "Running" {

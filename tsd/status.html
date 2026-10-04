@@ -57,6 +57,7 @@
   pre { margin: 0; max-height: 320px; overflow: auto; font: 12.5px/1.45 ui-monospace, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
   details summary { cursor: pointer; color: var(--muted); }
   summary .count { font-size: 14px; margin-left: 8px; }
+  summary .count { white-space: nowrap; }
   details[open] > table, details[open] > form { margin-top: 12px; }
   .note { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
   .hint { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
@@ -67,6 +68,14 @@
     background: var(--panel); color: var(--text); width: 100%;
   }
   textarea { font: 14px ui-monospace, Consolas, monospace; min-height: 70px; resize: vertical; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-top: 12px; }
+  .filters input[type=search] {
+    font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--text); flex: 1 1 200px; min-width: 0;
+  }
+  .filters label.check { margin: 0; font-size: 14px; }
+  tr.group td { color: var(--muted); font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; padding-top: 14px; border-top: 0; }
+  td .tag { display: block; color: var(--muted); font-size: 13px; }
   .hostrow { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
   .hostrow .host { flex: 3; min-width: 0; }
   .hostrow .port { flex: 1; min-width: 90px; }
@@ -111,10 +120,16 @@
   <section class="panel hidden" id="peerpanel">
     <details id="peerbox" open>
       <summary><span class="heading">Devices on your tailnet</span><span class="count" id="peercount"></span></summary>
+      <div class="filters">
+        <input type="search" id="peersearch" placeholder="Search name, address, OS, tag or place" aria-label="Search devices" autocomplete="off">
+        <label class="check"><input type="checkbox" id="peeronline"> Online only</label>
+        <label class="check hidden" id="peervpn-row"><input type="checkbox" id="peervpn"> <span id="peervpn-text"></span></label>
+      </div>
       <table>
         <thead><tr><th>Name</th><th>Address</th><th>OS</th><th>Status</th></tr></thead>
         <tbody id="peers"></tbody>
       </table>
+      <p class="note hidden" id="peernone" style="margin: 12px 0 0">No device matches.</p>
     </details>
   </section>
 
@@ -264,10 +279,67 @@ function hostRow(host, port) {
   return div;
 }
 
+// The device list. Peers come sorted from the daemon (online first); the page
+// groups them by kind and applies the filters. Exit servers of a VPN add-on
+// can be hundreds, so they are only requested while their box is ticked.
+const kinds = [['own', 'This tailnet'], ['shared', 'Shared with you'], ['vpn', 'VPN exit servers']];
+let peers = [];
+let shownPeers = '';
+
+function stored(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+function store(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
+
+function peerMatches(p, words) {
+  const text = [p.name, p.ip, p.os, p.location || '', (p.tags || []).join(' '), p.exitNode ? 'exit node' : '',
+    p.online ? 'online' : 'offline'].join(' ').toLowerCase();
+  return words.every(w => text.includes(w));
+}
+
+function peerRow(p) {
+  const tr = document.createElement('tr');
+  const notes = [];
+  if (p.exitNode === 'used') notes.push('exit node in use');
+  else if (p.exitNode) notes.push('exit node');
+  if (p.location) notes.push(p.location);
+  if (p.tags) notes.push(p.tags.join(', '));
+  for (const [v, mono, note] of [[p.name, false, notes.join(' · ')], [p.ip, true], [p.os], [p.online ? 'online' : 'offline']]) {
+    const td = document.createElement('td');
+    if (!p.online) td.className = 'off';
+    if (mono) { const c = document.createElement('code'); c.textContent = v; td.append(c); } else td.textContent = v;
+    if (note) { const n = document.createElement('span'); n.className = 'tag'; n.textContent = note; td.append(n); }
+    tr.append(td);
+  }
+  return tr;
+}
+
+function renderPeers() {
+  const words = $('peersearch').value.toLowerCase().split(/\s+/).filter(w => w);
+  const onlineOnly = $('peeronline').checked;
+  const shown = peers.filter(p => (!onlineOnly || p.online) && peerMatches(p, words));
+  // Rebuilding hundreds of rows every few seconds is wasteful; only do it
+  // when what is shown changed.
+  const key = JSON.stringify(shown);
+  if (key === shownPeers) return;
+  shownPeers = key;
+  const groups = kinds.map(([kind, title]) => [title, shown.filter(p => p.kind === kind)]).filter(g => g[1].length);
+  const rows = [];
+  for (const [title, list] of groups) {
+    if (groups.length > 1) {
+      const tr = document.createElement('tr'); tr.className = 'group';
+      const td = document.createElement('td'); td.colSpan = 4;
+      td.textContent = title + ' (' + list.length + ')';
+      tr.append(td); rows.push(tr);
+    }
+    rows.push(...list.map(peerRow));
+  }
+  $('peers').replaceChildren(...rows);
+  $('peernone').classList.toggle('hidden', shown.length > 0);
+}
+
 async function refresh() {
   let s;
   try {
-    s = await (await api('/api/status')).json();
+    s = await (await api('/api/status' + ($('peervpn').checked ? '?vpn=1' : ''))).json();
   } catch (e) {
     if (e.message !== 'locked') {
       $('state').textContent = 'Not responding';
@@ -309,24 +381,18 @@ async function refresh() {
     if (shownQR !== s.authURL) { shownQR = s.authURL; $('qr').src = '/qr.png?' + Date.now(); }
   }
 
-  const tbody = $('peers');
-  tbody.replaceChildren(...s.peers.map(p => {
-    const tr = document.createElement('tr');
-    for (const [v, mono] of [[p.name], [p.ip, true], [p.os], [p.online ? 'online' : 'offline']]) {
-      const td = document.createElement('td');
-      if (!p.online) td.className = 'off';
-      if (mono) { const c = document.createElement('code'); c.textContent = v; td.append(c); } else td.textContent = v;
-      tr.append(td);
-    }
-    return tr;
-  }));
-  $('peerpanel').classList.toggle('hidden', !s.peers.length);
-  $('peercount').textContent = s.peers.filter(p => p.online).length + ' online of ' + s.peers.length;
+  peers = s.peers;
+  const devices = peers.filter(p => p.kind !== 'vpn');
+  $('peerpanel').classList.toggle('hidden', !peers.length && !s.vpnServers.total);
+  $('peercount').textContent = devices.filter(p => p.online).length + ' online of ' + devices.length;
+  $('peervpn-row').classList.toggle('hidden', !s.vpnServers.total);
+  $('peervpn-text').textContent = 'Show VPN exit servers (' + s.vpnServers.total + ')';
+  renderPeers();
 
   // Game streaming. The rows are only rebuilt from the daemon's state while
   // the user is not in the middle of editing them.
   $('streampanel').classList.toggle('hidden', s.state !== 'Running' && !s.sunshineHosts.length);
-  $('peernames').replaceChildren(...s.peers.map(p => { const o = document.createElement('option'); o.value = p.name; return o; }));
+  $('peernames').replaceChildren(...devices.map(p => { const o = document.createElement('option'); o.value = p.name; return o; }));
   const hostsNow = JSON.stringify(s.sunshineHosts);
   if (!hostsDirty && hostsNow !== lastHosts) {
     lastHosts = hostsNow;
@@ -458,14 +524,16 @@ $('settingsform').onsubmit = async ev => {
 
 $('logbox').addEventListener('toggle', refresh);
 
-// The device list can be long. Remember whether it was left collapsed; the
-// browser may not allow storage, in which case it simply starts open.
-try {
-  if (localStorage.getItem('peersCollapsed') === '1') $('peerbox').open = false;
-} catch (e) {}
-$('peerbox').addEventListener('toggle', () => {
-  try { localStorage.setItem('peersCollapsed', $('peerbox').open ? '0' : '1'); } catch (e) {}
-});
+// The device list can be long. Remember whether it was left collapsed and
+// how it was filtered; the browser may not allow storage, in which case it
+// simply starts open and unfiltered.
+if (stored('peersCollapsed') === '1') $('peerbox').open = false;
+$('peerbox').addEventListener('toggle', () => store('peersCollapsed', $('peerbox').open ? '0' : '1'));
+$('peeronline').checked = stored('peersOnlineOnly') === '1';
+$('peervpn').checked = stored('peersShowVPN') === '1';
+$('peersearch').oninput = renderPeers;
+$('peeronline').onchange = () => { store('peersOnlineOnly', $('peeronline').checked ? '1' : '0'); renderPeers(); };
+$('peervpn').onchange = () => { store('peersShowVPN', $('peervpn').checked ? '1' : '0'); refresh(); };
 
 refresh();
 setInterval(refresh, 3000);
