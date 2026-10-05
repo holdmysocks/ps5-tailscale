@@ -27,7 +27,10 @@ type udpRelayConfig struct {
 	listen func() (net.PacketConn, error)
 	// dial opens the connection to the target for one client.
 	dial func(ctx context.Context) (net.Conn, error)
-	logf func(format string, args ...any)
+	// allow, if set, is asked once per client address whether to serve it.
+	// Datagrams from a client it turns down are dropped.
+	allow func(from net.Addr) bool
+	logf  func(format string, args ...any)
 }
 
 // udpFlow is the relay state for one client address.
@@ -118,6 +121,17 @@ func (r *udpRelay) readLoop() {
 		key := from.String()
 		r.mu.Lock()
 		fl := r.flows[key]
+		if fl == nil && r.cfg.allow != nil {
+			// Ask without holding the lock; the answer may take a moment.
+			r.mu.Unlock()
+			ok := r.cfg.allow(from)
+			r.mu.Lock()
+			if !ok {
+				r.mu.Unlock()
+				continue
+			}
+			fl = r.flows[key]
+		}
 		if fl == nil {
 			fl = &udpFlow{out: make(chan []byte, 256)}
 			r.flows[key] = fl

@@ -22,6 +22,14 @@ specification.
    to a fresh 1 MB stack and jumps to the Go entry point. The embedded copy
    is then released with `madvise(MADV_FREE)`.
 
+The launcher keeps a log, `/data/tailscale/launcher.log` (`report.c`): the
+firmware version, each step that fails, and a last line before it jumps into
+the Go program. A failure is also shown as a notification, because a payload
+manager does not show what a payload prints. Just before the jump, stderr is
+pointed at that log, so that a Go runtime that dies before the daemon has
+opened its own log leaves its message there. What cannot be reported this
+way is a failure in the SDK's crt, which runs before any of this.
+
 **The daemon** (`tsd/`, Go): a `tsnet` server.
 
 - Inbound: tsnet's fallback TCP handler pipes each tailnet connection to
@@ -54,7 +62,17 @@ specification.
   the priority, before any Go code runs, so the daemon leaves it in
   `/data/tailscale/priority` for the next start.
 - Update notice (`update.go`): the latest release tag from the GitHub API,
-  twice a day, compared with the running version.
+  twice a day, compared with the running version. A newer release is shown
+  on the page and announced once on the console; the announced version is
+  kept in `/data/tailscale/update-notified`.
+- Who may connect (`access.go`): with `allowFrom` set to `own`, the TCP
+  handler and the UDP relays ask Tailscale who the sender is (WhoIs) and
+  serve only nodes of the same user as the console, from the console's own
+  tailnet. Answers are kept for a minute per address. Anything that cannot
+  be established is refused.
+- Key expiry (`keyexpiry.go`): the date comes from the node's own status.
+  The page warns from 14 days before, and the console shows a notification
+  at 14, 3 and 1 days.
 - When a listener reports that it had to reopen its socket (the PS5's
   network was reconfigured), the daemon asks Tailscale to rebind and re-STUN
   instead of waiting for its interface polling. See [Rest mode](#rest-mode)

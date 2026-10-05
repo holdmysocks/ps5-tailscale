@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -122,6 +124,20 @@ func (d *daemon) watchForUpdates(ctx context.Context) {
 		}
 		if rel.Version != known && newerVersion(version, rel.Version) {
 			d.logf("a newer release is available: %s (running %s)", rel.Version, version)
+			d.notifyUpdate(rel.Version)
 		}
 	}
+}
+
+// updateNotifiedFile remembers the release the user has been told about on
+// screen, so that each release is announced once and not after every start.
+const updateNotifiedFile = "update-notified"
+
+func (d *daemon) notifyUpdate(latest string) {
+	path := filepath.Join(dataDir, updateNotifiedFile)
+	if b, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(b)) == latest {
+		return
+	}
+	notify("Tailscale for PS5 %s is available (this is %s).\nSee %s", latest, version, d.webURL())
+	os.WriteFile(path, []byte(latest+"\n"), 0o644)
 }

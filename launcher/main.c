@@ -12,6 +12,7 @@
 
 #include "goload.h"
 #include "homeicon.h"
+#include "report.h"
 
 #ifndef GO_IMAGE
 #error "GO_IMAGE must name the Go binary to embed"
@@ -154,12 +155,14 @@ main(int argc, char **argv) {
   kernel_set_ucred_rgid(pid, 0);
   kernel_set_ucred_svgid(pid, 0);
 
+  report_begin();
   home_icon_install_once();
 
   if (leave_realtime_class()) {
     /* Without this a runaway goroutine could hang the console, so do not
      * take the chance. */
-    fprintf(stderr, "launcher: could not leave the real-time scheduling class; not starting\n");
+    report_fail("launcher: could not lower the scheduling priority; not starting, "
+                "because a busy daemon could then freeze the console");
     return 1;
   }
 

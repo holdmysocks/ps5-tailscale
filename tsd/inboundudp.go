@@ -31,6 +31,8 @@ type udpExposer struct {
 	logf   func(format string, args ...any)
 	// targetHost is where the console's services are reached.
 	targetHost string
+	// allow, if set, decides which senders are served.
+	allow func(from net.Addr) bool
 
 	mu     sync.Mutex
 	addrs  []netip.Addr
@@ -71,7 +73,8 @@ func (e *udpExposer) update(addrs []netip.Addr, ports []uint16) {
 					var d net.Dialer
 					return d.DialContext(ctx, "udp", target)
 				},
-				logf: e.logf,
+				allow: e.allow,
+				logf:  e.logf,
 			})
 			if err != nil {
 				e.logf("udp %s: %v", listenAddr, err)

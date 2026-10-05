@@ -40,6 +40,7 @@ type settings struct {
 	UDPPorts      []uint16       `json:"udpPorts"`
 	BlockedPorts  []uint16       `json:"blockedPorts"`
 	Priority      string         `json:"priority"`
+	AllowFrom     string         `json:"allowFrom"`
 	CheckUpdates  bool           `json:"checkUpdates"`
 	Verbose       bool           `json:"verbose"`
 
@@ -60,12 +61,16 @@ func settingsFromConfig(cfg config) settings {
 		UDPPorts:      append([]uint16{}, cfg.UDPPorts...),
 		BlockedPorts:  append([]uint16{}, cfg.BlockedPorts...),
 		Priority:      priorityLow,
+		AllowFrom:     accessAll,
 		CheckUpdates:  cfg.CheckUpdates,
 		Verbose:       cfg.Verbose,
 		PasswordSet:   cfg.PasswordHash != "",
 	}
 	if cfg.Priority == priorityHigh {
 		s.Priority = priorityHigh
+	}
+	if cfg.AllowFrom == accessOwn {
+		s.AllowFrom = accessOwn
 	}
 	return s
 }
@@ -102,6 +107,12 @@ func (s *settings) validate() error {
 	}
 	if slices.Contains(s.UDPPorts, 0) || slices.Contains(s.BlockedPorts, 0) {
 		return fmt.Errorf("0 is not a port")
+	}
+	if s.AllowFrom == "" {
+		s.AllowFrom = accessAll
+	}
+	if s.AllowFrom != accessAll && s.AllowFrom != accessOwn {
+		return fmt.Errorf("who may connect must be all or own")
 	}
 	if s.Priority != priorityLow && s.Priority != priorityHigh {
 		return fmt.Errorf("the priority must be low or high")
@@ -194,6 +205,10 @@ func (d *daemon) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	if s.Priority == priorityHigh {
 		cfg.Priority = priorityHigh
 	}
+	cfg.AllowFrom = ""
+	if s.AllowFrom == accessOwn {
+		cfg.AllowFrom = accessOwn
+	}
 	cfg.CheckUpdates = s.CheckUpdates
 	cfg.Verbose = s.Verbose
 	if newHash != nil {
@@ -238,6 +253,7 @@ func (d *daemon) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	d.writePriorityFile()
+	d.access.clear()
 	// UDP ports and blocked ports are read from the config where they are used.
 
 	restart := []string{}

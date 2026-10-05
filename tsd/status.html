@@ -45,6 +45,17 @@
   th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 8px 8px 0; }
   td { padding: 7px 8px 7px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
   td.off { color: var(--muted); }
+  /* Names may wrap anywhere; addresses, OS and status stay in one piece. */
+  #peers td:nth-child(n+2), th { white-space: nowrap; overflow-wrap: normal; }
+  code.copy { cursor: pointer; border-bottom: 1px dotted var(--muted); }
+  code.copy:hover, code.copy:focus-visible { color: var(--accent); border-bottom-color: var(--accent); }
+  code.copy.done { color: var(--ok); border-bottom-color: transparent; }
+  @media (max-width: 480px) {
+    #peers code { font-size: 12.5px; } table { font-size: 14px; }
+    /* Label above value, so that names and addresses get the full width. */
+    dl { grid-template-columns: 1fr; gap: 0; }
+    dt { font-size: 13px; margin-top: 10px; }
+  }
   .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
   button {
     font: inherit; padding: 9px 16px; border-radius: 8px; border: 1px solid var(--line);
@@ -107,6 +118,7 @@
     <div class="state"><span class="dot" id="dot"></span><span id="state">Loading…</span></div>
     <dl id="facts"></dl>
     <ul class="health hidden" id="health"></ul>
+    <p class="health hidden" id="keywarn" style="padding-left: 0"></p>
     <p class="msg hidden" id="error"></p>
   </section>
 
@@ -162,6 +174,14 @@
             <code>passwordHash</code> from <code>/data/tailscale/config.json</code>.</span>
         </label>
         <label class="check hidden" id="set-pwremove-row"><input type="checkbox" id="set-pwremove"> Remove the password</label>
+        <label class="field">Who on the tailnet may connect to this console
+          <select id="set-allowfrom">
+            <option value="all">Every device my tailnet's access rules allow (default)</option>
+            <option value="own">Only devices logged in as the same user as this console</option>
+          </select>
+          <span class="hint">The second choice turns away other users' devices and devices shared into your
+            tailnet, for every port and this page. The page stays reachable on your home network.</span>
+        </label>
         <label class="field">UDP ports reachable from the tailnet
           <input type="text" id="set-udp" autocomplete="off">
           <span class="hint">Comma separated. 9295, 9296, 9297, 9302 are Remote Play's. Empty turns inbound UDP off.</span>
@@ -254,13 +274,49 @@ function show(id, text) {
   el.classList.toggle('hidden', !text);
 }
 
+// The page is served over plain HTTP, where browsers do not offer the
+// clipboard API, so fall back to the old way of copying a selection.
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) {}
+  const t = document.createElement('textarea');
+  t.value = text; t.setAttribute('readonly', ''); t.style.position = 'fixed'; t.style.opacity = '0';
+  document.body.append(t); t.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) {}
+  t.remove();
+  return ok;
+}
+
+// copyable returns a piece of monospace text that is copied when clicked.
+function copyable(text) {
+  const c = document.createElement('code');
+  c.className = 'copy'; c.textContent = text; c.title = 'Copy'; c.tabIndex = 0;
+  c.setAttribute('role', 'button'); c.setAttribute('aria-label', 'Copy ' + text);
+  const go = async () => {
+    if (c.classList.contains('done')) return;
+    const ok = await copyText(text);
+    c.textContent = ok ? 'Copied' : 'Copy failed'; c.classList.add('done');
+    setTimeout(() => { c.textContent = text; c.classList.remove('done'); }, 1200);
+  };
+  c.onclick = go;
+  c.onkeydown = ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(); } };
+  return c;
+}
+
+// row adds a fact. mono shows the value in monospace; an array of values is
+// shown as separately copyable pieces.
 function row(dl, name, value, mono) {
   const dt = document.createElement('dt'); dt.textContent = name;
   const dd = document.createElement('dd');
-  if (mono) { const c = document.createElement('code'); c.textContent = value; dd.append(c); }
+  if (Array.isArray(value)) value.forEach((v, i) => { if (i) dd.append(', '); dd.append(copyable(v)); });
+  else if (mono) { const c = document.createElement('code'); c.textContent = value; dd.append(c); }
   else dd.textContent = value;
   dl.append(dt, dd);
 }
+
+// Facts are rebuilt on every refresh; skip that while nothing changed so a
+// "Copied" confirmation is not wiped out mid-way.
+let shownFacts = '';
 
 function hostRow(host, port) {
   const div = document.createElement('div');
@@ -305,7 +361,7 @@ function peerRow(p) {
   for (const [v, mono, note] of [[p.name, false, notes.join(' · ')], [p.ip, true], [p.os], [p.online ? 'online' : 'offline']]) {
     const td = document.createElement('td');
     if (!p.online) td.className = 'off';
-    if (mono) { const c = document.createElement('code'); c.textContent = v; td.append(c); } else td.textContent = v;
+    if (mono) td.append(v ? copyable(v) : ''); else td.textContent = v;
     if (note) { const n = document.createElement('span'); n.className = 'tag'; n.textContent = note; td.append(n); }
     tr.append(td);
   }
@@ -359,14 +415,35 @@ async function refresh() {
     $('updatelink').href = s.updateURL;
   }
 
-  const dl = $('facts');
-  dl.replaceChildren();
-  row(dl, 'Name', s.dnsName || s.hostname);
-  if (s.ips.length) row(dl, 'Tailnet address', s.ips.join(', '), true);
-  if (s.tailnet) row(dl, 'Tailnet', s.tailnet);
-  if (s.ips.length) row(dl, 'Reachable from tailnet', 'every open TCP port' + (s.udpPorts.length ? '; UDP ' + s.udpPorts.join(', ') + ' (Remote Play)' : ''));
-  if (s.proxy) row(dl, 'HTTP proxy', s.proxy, true);
-  if (s.priority === 'high') row(dl, 'Priority', 'High');
+  // Key expiry, in whole days.
+  let keyText = '', keyWarn = '';
+  if (s.keyExpiry) {
+    const when = new Date(s.keyExpiry), days = Math.floor((when - Date.now()) / 86400000);
+    const date = when.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'});
+    const left = days < 0 ? 'expired' : days === 0 ? 'in less than a day' : 'in ' + days + (days === 1 ? ' day' : ' days');
+    keyText = date + ' (' + left + ')';
+    if (days < 14 && s.state === 'Running') {
+      keyWarn = 'This console\'s Tailscale key expires ' + left + '. After that it drops off your tailnet until you ' +
+        'use "Log in again" below. To stop it expiring, open the Tailscale admin console, find this device and ' +
+        'choose "Disable key expiry".';
+    }
+  }
+  show('keywarn', keyWarn);
+
+  const factsNow = JSON.stringify([s.dnsName, s.hostname, s.ips, s.tailnet, s.udpPorts, s.proxy, s.priority, s.allowFrom, keyText]);
+  if (factsNow !== shownFacts) {
+    shownFacts = factsNow;
+    const dl = $('facts');
+    dl.replaceChildren();
+    row(dl, 'Name', s.dnsName || s.hostname);
+    if (s.ips.length) row(dl, 'Tailnet address', s.ips);
+    if (s.tailnet) row(dl, 'Tailnet', s.tailnet);
+    if (s.ips.length) row(dl, 'Reachable from tailnet', 'every open TCP port' + (s.udpPorts.length ? '; UDP ' + s.udpPorts.join(', ') + ' (Remote Play)' : '')
+      + (s.allowFrom === 'own' ? '; only from your own devices' : ''));
+    if (keyText) row(dl, 'Key expires', keyText);
+    if (s.proxy) row(dl, 'HTTP proxy', s.proxy, true);
+    if (s.priority === 'high') row(dl, 'Priority', 'High');
+  }
 
   const health = $('health');
   health.replaceChildren(...(s.health || []).map(h => { const li = document.createElement('li'); li.textContent = h; return li; }));
@@ -477,6 +554,7 @@ async function loadSettings() {
   $('set-forwards').value = c.forwards.map(f => f.proto + ' ' + f.listen + ' ' + f.target).join('\n');
   $('set-proxy').value = c.httpProxyAddr;
   $('set-priority').value = c.priority;
+  $('set-allowfrom').value = c.allowFrom;
   $('set-webaddr').value = c.webAddr;
   $('set-updates').checked = c.checkUpdates;
   $('set-verbose').checked = c.verbose;
@@ -502,6 +580,7 @@ $('settingsform').onsubmit = async ev => {
     udpPorts: udp,
     blockedPorts: blocked,
     priority: $('set-priority').value,
+    allowFrom: $('set-allowfrom').value,
     checkUpdates: $('set-updates').checked,
     verbose: $('set-verbose').checked,
   };

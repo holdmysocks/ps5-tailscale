@@ -137,7 +137,14 @@ shared with you, and marks the ones that can be used as an exit node. It can
 be searched (name, address, OS, tag, place) and limited to devices that are
 online. If your tailnet has a VPN add-on such as Mullvad, its exit servers
 are counted but kept out of the list until you tick **Show VPN exit
-servers**.
+servers**. Click an address to copy it.
+
+**Key expiry.** The page shows when the console's Tailscale key expires. By
+default that is 180 days after logging in, and an expired key takes the
+console off your tailnet until someone presses **Log in again**. From two
+weeks before, the page and a notification on the console warn about it. To
+avoid it altogether, open the Tailscale admin console, find the console in
+the list of machines and choose **Disable key expiry**.
 
 **Password.** Out of the box the page has no password, like the console's
 other homebrew services: anyone on your LAN, or on your tailnet if your ACLs
@@ -145,9 +152,9 @@ allow it, can use it. Set one under **Settings**. It is then asked for on
 every device except the console itself. If you forget it, delete the
 `passwordHash` line from `/data/tailscale/config.json`.
 
-**Settings.** The name on the tailnet, the password, which UDP ports are
-reachable and which TCP ports are not, extra forwards, the HTTP proxy, the
-priority, and update checks. Most take effect when saved; the page says which
+**Settings.** The name on the tailnet, the password, who on the tailnet may
+connect, which UDP ports are reachable and which TCP ports are not, extra
+forwards, the HTTP proxy, the priority, and update checks. Most take effect when saved; the page says which
 ones need Tailscale to be started again.
 
 ### Game streaming (Moonlight to Sunshine)
@@ -229,6 +236,7 @@ optional.
   ],
   "udpPorts": [9295, 9296, 9297, 9302],
   "blockedPorts": [],
+  "allowFrom": "",
   "priority": "",
   "checkUpdates": true,
   "verbose": false
@@ -247,8 +255,9 @@ optional.
 | `forwards` | Extra local forwards: `proto` is `tcp` or `udp`, `listen` a localhost address, `target` a tailnet host and port. |
 | `udpPorts` | The console's UDP ports reachable from the tailnet. Default `[9295, 9296, 9297, 9302]` (Remote Play). `[]` turns inbound UDP off. |
 | `blockedPorts` | Local TCP ports that are never exposed to the tailnet. |
+| `allowFrom` | `"own"` lets only devices logged in as the same user as the console connect; other users' devices and devices shared into the tailnet are turned away. Anything else is the default: every device your tailnet's access rules allow. If the console is tagged, `"own"` means the devices of its own tailnet. |
 | `priority` | `"high"` lets the daemon compete with games for CPU time; anything else is the default, low. Applied when Tailscale starts. |
-| `checkUpdates` | Ask GitHub twice a day whether a newer release exists, to show it on the status page. Nothing is downloaded. |
+| `checkUpdates` | Ask GitHub twice a day whether a newer release exists, to show it on the status page and announce it once on the console. Nothing is downloaded. |
 | `verbose` | Put Tailscale's own log in the main log as well. |
 
 Files on the console:
@@ -259,6 +268,7 @@ Files on the console:
 | `/data/tailscale/state/` | Tailscale's state, including the login. |
 | `/data/tailscale/tailscale.log` | The daemon's log, rotated at 2 MB. |
 | `/data/tailscale/tailscale-debug.log` | Tailscale's detailed log, up to 4 MB plus one older file. |
+| `/data/tailscale/launcher.log` | What the payload did before Tailscale itself started. The place to look when nothing seems to happen. |
 | `/data/tailscale/icon-installed` | Marks that the home screen icon was added. Delete it to have the icon added again on the next start. |
 | `/data/tailscale/icon-helper.elf` | The small payload that adds and removes the icon. |
 | `/user/app/TSCL00001/` | The home screen icon. |
@@ -277,6 +287,14 @@ Left to do by hand:
 
 ## Troubleshooting
 
+- **Nothing happens when the payload is sent.** If the payload cannot start,
+  it says why in a notification on the console and in
+  `/data/tailscale/launcher.log`; fetch that file over FTP. A payload manager
+  does not show what a payload prints, so sending it from a PC shows more:
+  `socat -t 30 - TCP:<console>:9021 < tailscale.elf`, or
+  `.\tools\ps5send.ps1 -File tailscale.elf -PS5Host <console>` on Windows.
+  If the log ends with "starting the Go program" and no status page appears,
+  whatever follows that line is the crash report to send.
 - **The status page does not open on the console, but does from a PC.**
   Check that the PS5's proxy server setting is "Do Not Use".
 - **The Moonlight client cannot find the host.** The host to add is
@@ -300,8 +318,9 @@ Left to do by hand:
   tailnet Tailscale encrypts it.
 - All listening TCP ports on the console, and the UDP ports in `udpPorts`,
   become reachable from your tailnet. That includes the payload loader, which
-  runs anything sent to it. Use Tailscale ACLs if other people share your
-  tailnet, or list ports under "TCP ports never exposed".
+  runs anything sent to it. If other people use your tailnet or share
+  devices into it, set **Who on the tailnet may connect** to your own devices
+  only, use Tailscale ACLs, or list ports under "TCP ports never exposed".
 - The local forwards and the proxy are for the console's own apps and are
   not exposed to the tailnet.
 - With update checks on, the console contacts `api.github.com` twice a day.
@@ -321,7 +340,9 @@ the tailnet, a ProsperoLight stream from a Sunshine host through the forward,
 two forwarded hosts on different ports (with a stand-in for the second), the
 HTTP proxy, adding and removing the home screen icon, the password from the
 LAN and the tailnet, changing settings from the page, both priority settings,
-the update check, a short stay in rest mode (about a minute: the same process
+the update check, limiting connections to your own devices (with the
+console's owner's devices only; a refusal has not been seen for real), a
+short stay in rest mode (about a minute: the same process
 carried on and was back on the tailnet within a second of waking).
 
 Remote Play through the tailnet address works with Chiaki and with Asobi on

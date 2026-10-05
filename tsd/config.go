@@ -42,6 +42,10 @@ type config struct {
 	UDPPorts []uint16 `json:"udpPorts"`
 	// BlockedPorts lists local TCP ports that are never exposed to the tailnet.
 	BlockedPorts []uint16 `json:"blockedPorts,omitempty"`
+	// AllowFrom limits which tailnet devices may reach the console's services:
+	// empty for every device the tailnet's access rules allow, "own" for only
+	// the devices of the user this console is logged in as.
+	AllowFrom string `json:"allowFrom,omitempty"`
 	// Priority is how the daemon competes for CPU time: "low" (the default)
 	// never takes time from a game, "high" shares the CPU with games on
 	// equal terms, which can make Remote Play smoother. Applied at start.
@@ -95,6 +99,9 @@ func (cfg *config) normalize() {
 			cfg.SunshineHosts = append(cfg.SunshineHosts, sunshineHost{Host: cfg.SunshineHost})
 		}
 		cfg.SunshineHost = ""
+	}
+	if cfg.AllowFrom != accessOwn {
+		cfg.AllowFrom = ""
 	}
 	if cfg.Priority != priorityHigh {
 		cfg.Priority = ""

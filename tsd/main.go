@@ -124,6 +124,7 @@ type daemon struct {
 	latest        releaseInfo // newest release known, see update.go
 
 	sessions   sessions         // browsers that have entered the password
+	access     accessCache      // recent decisions about who may connect
 	tailnetWeb *tailnetListener // status page connections arriving over the tailnet
 
 	quit     chan struct{}
@@ -186,11 +187,12 @@ func (d *daemon) run() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	d.udp = &udpExposer{listen: d.srv.ListenPacket, logf: d.logf, targetHost: "127.0.0.1"}
+	d.udp = &udpExposer{listen: d.srv.ListenPacket, logf: d.logf, targetHost: "127.0.0.1", allow: d.allowedFromAddr}
 	go d.watch(ctx)
 	go d.recoverLogin(ctx)
 	go d.exposeUDP(ctx)
 	go d.watchForUpdates(ctx)
+	go d.watchKeyExpiry(ctx)
 
 	sigc := make(chan os.Signal, 1)
 	signal.Notify(sigc, syscall.SIGTERM, syscall.SIGINT)

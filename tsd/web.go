@@ -59,6 +59,10 @@ type statusInfo struct {
 	Priority string   `json:"priority"`
 	// PasswordSet says whether the page is password protected.
 	PasswordSet bool `json:"passwordSet"`
+	// AllowFrom is "all" or "own": which tailnet devices may connect.
+	AllowFrom string `json:"allowFrom"`
+	// KeyExpiry is when this console's Tailscale key expires, if it does.
+	KeyExpiry *time.Time `json:"keyExpiry,omitempty"`
 	// LatestVersion and UpdateURL are set when a newer release exists.
 	LatestVersion string `json:"latestVersion,omitempty"`
 	UpdateURL     string `json:"updateURL,omitempty"`
@@ -176,6 +180,7 @@ func (d *daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Hostname:      d.cfg.Hostname,
 		Proxy:         d.cfg.HTTPProxyAddr,
 		Priority:      priorityLow,
+		AllowFrom:     accessAll,
 		PasswordSet:   d.cfg.PasswordHash != "",
 		Uptime:        int64(time.Since(d.started).Seconds()),
 		IPs:           []string{},
@@ -184,6 +189,9 @@ func (d *daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if d.cfg.Priority == priorityHigh {
 		info.Priority = priorityHigh
+	}
+	if d.cfg.AllowFrom == accessOwn {
+		info.AllowFrom = accessOwn
 	}
 	for _, h := range d.cfg.SunshineHosts {
 		info.SunshineHosts = append(info.SunshineHosts, sunshineInfo{Host: h.Host, Port: h.basePort(), Address: h.clientAddress()})
@@ -219,6 +227,7 @@ func (d *daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 				for _, ip := range st.Self.TailscaleIPs {
 					info.IPs = append(info.IPs, ip.String())
 				}
+				info.KeyExpiry = st.Self.KeyExpiry
 			}
 			info.Peers, info.VPNServers = peersFromStatus(st, r.URL.Query().Get("vpn") == "1")
 		}

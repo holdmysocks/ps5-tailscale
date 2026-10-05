@@ -28,6 +28,9 @@ func (d *daemon) forwardToLocalhost(src, dst netip.AddrPort) (handler func(net.C
 		// open here must not end up at the console's service.
 		return nil, false
 	}
+	if !d.allowedFrom(src.Addr()) {
+		return nil, false
+	}
 	port := dst.Port()
 	if port == d.webPort {
 		// The status page is served on the tailnet connection itself rather

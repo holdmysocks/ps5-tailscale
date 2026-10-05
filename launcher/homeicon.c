@@ -9,6 +9,8 @@
 
 #ifdef ICON_HELPER
 
+#include "report.h"
+
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -103,6 +105,7 @@ home_icon_install_once(void) {
   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   if (connect(fd, (struct sockaddr *)&addr, sizeof(addr))) {
     /* No ELF loader on the usual port: go without an icon this time. */
+    report_log("launcher: home screen icon not installed: no ELF loader on port %d", LOADER_PORT);
     close(fd);
     return;
   }
@@ -139,9 +142,9 @@ home_icon_install_once(void) {
       write(fd, ICON_VERSION, sizeof(ICON_VERSION) - 1);
       close(fd);
     }
-    fprintf(stderr, "launcher: home screen icon installed\n");
+    report_log("launcher: home screen icon installed");
   } else {
-    fprintf(stderr, "launcher: home screen icon not installed: %s\n", got ? reply : "no reply from the helper");
+    report_log("launcher: home screen icon not installed: %s", got ? reply : "no reply from the helper");
   }
 }
 

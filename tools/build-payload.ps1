@@ -54,7 +54,7 @@ if ($HomeIcon) {
     $ccArgs += "-DICON_HELPER=`"$($helper -replace '\\', '/')`""
 }
 $ccArgs += @('-o', $elf, (Join-Path $DevRoot 'launcher\main.c'), (Join-Path $DevRoot 'launcher\goload.c'),
-    (Join-Path $DevRoot 'launcher\homeicon.c'))
+    (Join-Path $DevRoot 'launcher\homeicon.c'), (Join-Path $DevRoot 'launcher\report.c'))
 Invoke-PS5CC @ccArgs
 
 Write-Host ("built {0} ({1:N1} MB)" -f $elf, ((Get-Item $elf).Length / 1MB))

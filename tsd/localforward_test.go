@@ -12,10 +12,7 @@ import (
 // startEcho runs a TCP and a UDP echo server on the same port and returns it.
 func startEcho(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ln, pc := listenBoth(t)
 	t.Cleanup(func() { ln.Close() })
 	go func() {
 		for {
@@ -26,10 +23,6 @@ func startEcho(t *testing.T) string {
 			go func() { io.Copy(c, c); c.Close() }()
 		}
 	}()
-	pc, err := net.ListenPacket("udp", ln.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
 	t.Cleanup(func() { pc.Close() })
 	go func() {
 		buf := make([]byte, 65535)
@@ -44,14 +37,35 @@ func startEcho(t *testing.T) string {
 	return ln.Addr().String()
 }
 
-// freePort returns a localhost address nothing listens on.
+// listenBoth opens a TCP and a UDP socket on the same localhost port. A port
+// the system hands out for TCP is not always available for UDP (Windows
+// reserves ranges per protocol), so it tries until both work.
+func listenBoth(t *testing.T) (net.Listener, net.PacketConn) {
+	t.Helper()
+	var lastErr error
+	for range 50 {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		pc, err := net.ListenPacket("udp", ln.Addr().String())
+		if err == nil {
+			return ln, pc
+		}
+		lastErr = err
+		ln.Close()
+	}
+	t.Fatal(lastErr)
+	return nil, nil
+}
+
+// freePort returns a localhost address nothing listens on, free for both
+// TCP and UDP.
 func freePort(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ln, pc := listenBoth(t)
 	defer ln.Close()
+	defer pc.Close()
 	return ln.Addr().String()
 }
 

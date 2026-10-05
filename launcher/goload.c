@@ -7,6 +7,7 @@
  * FreeBSD kernel would: %rdi pointing at argc/argv/envp/auxv. */
 
 #include <elf.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -17,6 +18,7 @@
 #include <ps5/kernel.h>
 
 #include "goload.h"
+#include "report.h"
 
 #define PS5_PAGE_SIZE 0x4000ul
 #define PAGE_TRUNC(x) ((x) & ~(PS5_PAGE_SIZE - 1))
@@ -134,7 +136,7 @@ goload_run(const uint8_t *image, size_t size, char *const argv[], char *const en
   int envc = 0;
 
   if (image_check(image, size)) {
-    fprintf(stderr, "goload: not a relocatable x86-64 ELF image\n");
+    report_fail("goload: the embedded program is not a relocatable x86-64 ELF image");
     return -1;
   }
 
@@ -143,7 +145,7 @@ goload_run(const uint8_t *image, size_t size, char *const argv[], char *const en
       continue;
     }
     if (phdr[i].p_offset + phdr[i].p_filesz > size) {
-      fprintf(stderr, "goload: truncated image\n");
+      report_fail("goload: the embedded program is truncated");
       return -1;
     }
     if (phdr[i].p_vaddr < min_vaddr) {
@@ -154,7 +156,7 @@ goload_run(const uint8_t *image, size_t size, char *const argv[], char *const en
     }
   }
   if (min_vaddr >= max_vaddr) {
-    fprintf(stderr, "goload: image has no loadable segments\n");
+    report_fail("goload: the embedded program has no loadable segments");
     return -1;
   }
   min_vaddr = PAGE_TRUNC(min_vaddr);
@@ -162,7 +164,7 @@ goload_run(const uint8_t *image, size_t size, char *const argv[], char *const en
 
   base = mmap(0, max_vaddr - min_vaddr, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (base == MAP_FAILED) {
-    perror("goload: mmap image");
+    report_fail("goload: no memory for the program (mmap: %s)", strerror(errno));
     return -1;
   }
   bias = (uintptr_t)base - min_vaddr;
@@ -185,7 +187,7 @@ goload_run(const uint8_t *image, size_t size, char *const argv[], char *const en
   }
   for (size_t i = 0; rela && i < relasz / sizeof(*rela); i++) {
     if (ELF64_R_TYPE(rela[i].r_info) != R_X86_64_RELATIVE) {
-      fprintf(stderr, "goload: unsupported relocation type %u\n", (unsigned)ELF64_R_TYPE(rela[i].r_info));
+      report_fail("goload: unsupported relocation type %u", (unsigned)ELF64_R_TYPE(rela[i].r_info));
       return -1;
     }
     *(uintptr_t *)(bias + rela[i].r_offset) = bias + rela[i].r_addend;
@@ -205,18 +207,19 @@ goload_run(const uint8_t *image, size_t size, char *const argv[], char *const en
      * that contains the address, so first let a regular mprotect split the
      * text range off into an entry of its own. */
     if (mprotect((void *)start, end - start, PROT_READ)) {
-      perror("goload: mprotect");
+      report_fail("goload: mprotect: %s", strerror(errno));
       return -1;
     }
     if (kernel_mprotect(-1, start, end - start, PROT_READ | PROT_EXEC)) {
-      fprintf(stderr, "goload: kernel_mprotect failed\n");
+      report_fail("goload: could not make the program executable (kernel_mprotect failed); "
+                  "this firmware or jailbreak may not allow it");
       return -1;
     }
   }
 
   stack = mmap(0, GO_STACK_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (stack == MAP_FAILED) {
-    perror("goload: mmap stack");
+    report_fail("goload: no memory for the stack (mmap: %s)", strerror(errno));
     return -1;
   }
 
@@ -251,6 +254,13 @@ goload_run(const uint8_t *image, size_t size, char *const argv[], char *const en
   fprintf(stderr, "goload: image %p..%p entry %#lx stack %p..%p argc=%d\n", base,
           base + (max_vaddr - min_vaddr), (unsigned long)(bias + ehdr->e_entry), stack, stack + GO_STACK_SIZE, argc);
   dbg_install((uintptr_t)base, min_vaddr);
+#else
+  /* From here on nothing is printed by the launcher. If the Go runtime dies
+   * before the daemon has opened its own log, its message lands in the
+   * launcher log instead of being lost with the sender's connection. */
+  report_log("launcher: starting the Go program");
+  fflush(stderr);
+  report_capture_stderr();
 #endif
 
   fflush(stdout);
