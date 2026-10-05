@@ -58,6 +58,61 @@ These folders are not in the repository.
 `-HomeIcon` also builds `appicon\` into `out\appicon.elf` and embeds it in
 the launcher.
 
+## Making a release
+
+```powershell
+.\tools\make-release.ps1 -Version 1.2.3
+```
+
+builds the payload and puts three files in `out\release-1.2.3`:
+`tailscale.elf`, its signature `tailscale.elf.sig`, and `SHA256SUMS.txt`.
+Attach all three to the GitHub release, and tag it `v1.2.3`. The status
+page's **Install** button only offers a release that has the first two, and
+only installs it if the signature is good and is for that very version.
+
+### The signing key
+
+Releases are signed with an Ed25519 key. Its public half is
+`updatePublicKey` in `tsd\selfupdate.go`; the private half is a small file
+that stays out of the repository:
+
+```
+%APPDATA%\ps5-tailscale\release-signing.key        (Windows)
+~/.config/ps5-tailscale/release-signing.key        (Linux)
+```
+
+`PS5TS_SIGNING_KEY` names another location. The file is not encrypted, so
+that a release can be made without typing anything; treat it like an SSH
+key. The tool that manages it is `tsd\cmd\signrelease`, run from `tsd`:
+
+```powershell
+go run ./cmd/signrelease pubkey                      # show the public key
+go run ./cmd/signrelease backup -out Z:\keys\ps5-tailscale-signing.backup
+go run ./cmd/signrelease restore -in Z:\keys\ps5-tailscale-signing.backup
+```
+
+- **Back it up.** `backup` writes a copy encrypted with a passphrase you
+  type, meant for a NAS, a USB stick or a password manager. Without the
+  passphrase the copy is useless, to you as well, so keep the passphrase
+  somewhere other than next to the file.
+- **Building on another PC.** Copy the backup there and run `restore`. It
+  refuses to overwrite a key that is already present.
+- **If the key is lost,** consoles running releases made with it can no
+  longer install updates from the page: a release signed with a new key is
+  refused. Their owners have to send the new payload by hand once.
+- **If the key leaks,** make a new one (`keygen`, after moving the old file
+  away), put its public half in `selfupdate.go` and release. The same
+  one-time manual update applies.
+- **A fork** that publishes its own releases needs its own key and its own
+  `releasesAPI` in `tsd\update.go`.
+
+Test builds can use a throwaway key and a local "release":
+
+```powershell
+.\tools\build-payload.ps1 -GoDir tsd -Name test -Version 0.0.1 -HomeIcon `
+    -Set 'main.updatePublicKey=<base64>', 'main.releasesAPI=http://127.0.0.1:18099/latest.json'
+```
+
 ## Sending to the console
 
 ```powershell

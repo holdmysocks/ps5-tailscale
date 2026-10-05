@@ -46,6 +46,13 @@ type config struct {
 	// empty for every device the tailnet's access rules allow, "own" for only
 	// the devices of the user this console is logged in as.
 	AllowFrom string `json:"allowFrom,omitempty"`
+	// PayloadPath names the copy of the payload that is started at boot, for
+	// example in a payload manager's folder. An update installed from the
+	// status page replaces that file too. Empty means there is none to keep
+	// up to date.
+	PayloadPath string `json:"payloadPath,omitempty"`
+	// ReceiveDir is where files sent to the console with Taildrop end up.
+	ReceiveDir string `json:"receiveDir"`
 	// Priority is how the daemon competes for CPU time: "low" (the default)
 	// never takes time from a game, "high" shares the CPU with games on
 	// equal terms, which can make Remote Play smoother. Applied at start.
@@ -61,6 +68,7 @@ func defaultConfig() config {
 	return config{
 		Hostname:     "ps5",
 		WebAddr:      ":8090",
+		ReceiveDir:   defaultReceiveDir,
 		UDPPorts:     slices.Clone(remotePlayUDPPorts),
 		CheckUpdates: true,
 	}
@@ -99,6 +107,9 @@ func (cfg *config) normalize() {
 			cfg.SunshineHosts = append(cfg.SunshineHosts, sunshineHost{Host: cfg.SunshineHost})
 		}
 		cfg.SunshineHost = ""
+	}
+	if cfg.ReceiveDir == "" {
+		cfg.ReceiveDir = defaultReceiveDir
 	}
 	if cfg.AllowFrom != accessOwn {
 		cfg.AllowFrom = ""

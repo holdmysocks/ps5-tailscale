@@ -66,7 +66,11 @@ type statusInfo struct {
 	// LatestVersion and UpdateURL are set when a newer release exists.
 	LatestVersion string `json:"latestVersion,omitempty"`
 	UpdateURL     string `json:"updateURL,omitempty"`
-	Uptime        int64  `json:"uptimeSeconds"`
+	// CanUpdate says that the newer release can be installed from the page;
+	// Update reports on an installation in progress.
+	CanUpdate bool           `json:"canUpdate"`
+	Update    updateProgress `json:"update"`
+	Uptime    int64          `json:"uptimeSeconds"`
 }
 
 // webHandler builds the status page and its API.
@@ -99,6 +103,8 @@ func (d *daemon) webHandler() http.Handler {
 	mux.HandleFunc("GET /api/logs", d.protect(d.handleLogs))
 	mux.HandleFunc("GET /qr.png", d.protect(d.handleQR))
 	mux.HandleFunc("GET /api/config", d.protect(d.handleGetConfig))
+	mux.HandleFunc("GET /api/files", d.protect(d.handleFiles))
+	mux.HandleFunc("GET /api/files/get", d.protect(d.handleFileGet))
 	for path, h := range map[string]http.HandlerFunc{
 		"/api/config":    d.handleSetConfig,
 		"/api/login":     d.handleLogin,
@@ -106,6 +112,7 @@ func (d *daemon) webHandler() http.Handler {
 		"/api/quit":      d.handleQuit,
 		"/api/uninstall": d.handleUninstall,
 		"/api/sunshine":  d.handleSunshine,
+		"/api/update":    d.handleUpdate,
 	} {
 		mux.HandleFunc("POST "+path, d.protect(d.guard(h)))
 	}
@@ -141,7 +148,7 @@ func writeFileTail(w io.Writer, path string, max int64) {
 	if fi, err := f.Stat(); err == nil && fi.Size() > max {
 		f.Seek(fi.Size()-max, io.SeekStart)
 	}
-	io.Copy(w, f)
+	io.Copy(w, onlyReader{f}) // no sendfile, see sendToLoader
 }
 
 func (d *daemon) guard(h http.HandlerFunc) http.HandlerFunc {
@@ -198,7 +205,9 @@ func (d *daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if newerVersion(version, d.latest.Version) {
 		info.LatestVersion, info.UpdateURL = d.latest.Version, d.latest.URL
+		info.CanUpdate = canInstall(d.latest)
 	}
+	info.Update = d.update
 	d.mu.Unlock()
 	info.UDPPorts = []uint16{}
 	if d.udp != nil {
@@ -416,4 +425,14 @@ func stopRunningInstance(webAddr string) bool {
 		time.Sleep(250 * time.Millisecond)
 	}
 	return true
+}
+
+// handleUpdate starts installing the newest release.
+func (d *daemon) handleUpdate(w http.ResponseWriter, r *http.Request) {
+	if err := d.startUpdate(); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	d.logf("update requested from the status page")
+	io.WriteString(w, "The update has started.\n")
 }

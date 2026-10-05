@@ -31,7 +31,8 @@ VPN here. It runs inside one process:
   directly. They can through a *local forward* (see
   [game streaming](#game-streaming-moonlight-to-sunshine) and
   [configuration](#configuration)).
-- No subnet routing, Tailscale SSH, Taildrop or Funnel.
+- No subnet routing, Tailscale SSH or Funnel. Taildrop works for receiving
+  files, not for sending them.
 - The console cannot use an exit node, and it does not offer itself as one.
   Offering one is doable (it needs no tunnel device), but the PS5 would make
   a terrible exit node: every packet would pass through this one low-priority
@@ -124,13 +125,36 @@ Notes:
   sleeps, so it is not on the tailnet then. Tailscale carries on by itself
   once the console is awake again.
 
+### Sending files to the console (Taildrop)
+
+Send a file to the console from any of your own devices with Tailscale's
+Taildrop: the share menu on a phone, `Send with Tailscale` on a desktop, or
+`tailscale file cp <file> <console name>:`. The file lands in
+`/data/tailscale/received` on the console (changeable in the settings), a
+notification says so, and the status page lists it under **Received files**
+with a download link. A file with the same name as an earlier one gets a
+number; nothing is overwritten.
+
+Taildrop only works between devices logged in as the same user; that is
+Tailscale's rule. Sending files from the console is not implemented.
+
 ### The status page
 
 `http://<console address>:8090`, on the LAN or over the tailnet, or the
 **Tailscale** icon on the home screen. It shows the connection state, the
 login link and your devices, and has the game streaming hosts, the settings,
-and buttons for logging out, stopping and uninstalling. It also says when a
-newer release is available.
+and buttons for logging out, stopping and uninstalling.
+
+**Updates.** When a newer release exists the page says so, and the console
+shows a notification once. **Install** downloads the release, checks that it
+is signed with this project's release key and is the version it claims to be,
+and starts it; the login and settings are kept. Nothing is ever installed
+without that button being pressed. It needs an ELF loader on port 9021, like
+sending the payload by hand does. If you keep `tailscale.elf` in a payload
+manager or autoloader so that it starts with the console, put that file's
+path under **Payload file to keep up to date** in the settings, for example
+`/data/pldmgr/payloads/Tailscale/tailscale.elf`; the update then replaces
+that copy as well. Otherwise the old version is back after the next restart.
 
 **Devices.** The list is grouped into your tailnet's devices and devices
 shared with you, and marks the ones that can be used as an exit node. It can
@@ -154,7 +178,8 @@ every device except the console itself. If you forget it, delete the
 
 **Settings.** The name on the tailnet, the password, who on the tailnet may
 connect, which UDP ports are reachable and which TCP ports are not, extra
-forwards, the HTTP proxy, the priority, and update checks. Most take effect when saved; the page says which
+forwards, the HTTP proxy, the folder for received files, the payload file to
+keep up to date, the priority, and update checks. Most take effect when saved; the page says which
 ones need Tailscale to be started again.
 
 ### Game streaming (Moonlight to Sunshine)
@@ -237,6 +262,8 @@ optional.
   "udpPorts": [9295, 9296, 9297, 9302],
   "blockedPorts": [],
   "allowFrom": "",
+  "receiveDir": "/data/tailscale/received",
+  "payloadPath": "",
   "priority": "",
   "checkUpdates": true,
   "verbose": false
@@ -256,6 +283,8 @@ optional.
 | `udpPorts` | The console's UDP ports reachable from the tailnet. Default `[9295, 9296, 9297, 9302]` (Remote Play). `[]` turns inbound UDP off. |
 | `blockedPorts` | Local TCP ports that are never exposed to the tailnet. |
 | `allowFrom` | `"own"` lets only devices logged in as the same user as the console connect; other users' devices and devices shared into the tailnet are turned away. Anything else is the default: every device your tailnet's access rules allow. If the console is tagged, `"own"` means the devices of its own tailnet. |
+| `receiveDir` | Where files sent to the console with Taildrop are put. |
+| `payloadPath` | The copy of `tailscale.elf` that is started with the console, if there is one. An update installed from the status page replaces it. Empty: none. |
 | `priority` | `"high"` lets the daemon compete with games for CPU time; anything else is the default, low. Applied when Tailscale starts. |
 | `checkUpdates` | Ask GitHub twice a day whether a newer release exists, to show it on the status page and announce it once on the console. Nothing is downloaded. |
 | `verbose` | Put Tailscale's own log in the main log as well. |
@@ -268,6 +297,7 @@ Files on the console:
 | `/data/tailscale/state/` | Tailscale's state, including the login. |
 | `/data/tailscale/tailscale.log` | The daemon's log, rotated at 2 MB. |
 | `/data/tailscale/tailscale-debug.log` | Tailscale's detailed log, up to 4 MB plus one older file. |
+| `/data/tailscale/received/` | Files received with Taildrop. |
 | `/data/tailscale/launcher.log` | What the payload did before Tailscale itself started. The place to look when nothing seems to happen. |
 | `/data/tailscale/icon-installed` | Marks that the home screen icon was added. Delete it to have the icon added again on the next start. |
 | `/data/tailscale/icon-helper.elf` | The small payload that adds and removes the icon. |
@@ -324,6 +354,12 @@ Left to do by hand:
 - The local forwards and the proxy are for the console's own apps and are
   not exposed to the tailnet.
 - With update checks on, the console contacts `api.github.com` twice a day.
+- An update is only installed when **Install** is pressed, and only if it
+  carries a valid signature made with the project's release key, which is
+  not kept on GitHub. A release put up by someone who got into the GitHub
+  account, or changed on the way, is refused.
+- Files received with Taildrop come only from devices logged in as the same
+  user. The status page hands them out as downloads and never displays them.
 
 ## Resource use
 
@@ -340,7 +376,9 @@ the tailnet, a ProsperoLight stream from a Sunshine host through the forward,
 two forwarded hosts on different ports (with a stand-in for the second), the
 HTTP proxy, adding and removing the home screen icon, the password from the
 LAN and the tailnet, changing settings from the page, both priority settings,
-the update check, limiting connections to your own devices (with the
+the update check, installing an update from the page (rehearsed with a test
+release, including replacing a second copy of the payload), receiving files
+with Taildrop, limiting connections to your own devices (with the
 console's owner's devices only; a refusal has not been seen for real), a
 short stay in rest mode (about a minute: the same process
 carried on and was back on the tailnet within a second of waking).

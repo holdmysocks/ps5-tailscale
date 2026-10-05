@@ -101,6 +101,11 @@
   <section class="panel banner hidden" id="updatepanel">
     <strong id="updatetext"></strong>
     <a id="updatelink" target="_blank" rel="noopener">Release notes and download</a>
+    <div class="actions" style="margin-top: 12px">
+      <button id="btn-update" class="hidden">Install it</button>
+    </div>
+    <p class="note hidden" id="updatestate" style="margin: 12px 0 0"></p>
+    <p class="msg hidden" id="updatemsg"></p>
   </section>
 
   <section class="panel hidden" id="lockpanel">
@@ -142,6 +147,18 @@
         <tbody id="peers"></tbody>
       </table>
       <p class="note hidden" id="peernone" style="margin: 12px 0 0">No device matches.</p>
+    </details>
+  </section>
+
+  <section class="panel hidden" id="filespanel">
+    <details id="filesbox">
+      <summary><span class="heading">Received files</span><span class="count" id="filescount"></span></summary>
+      <p class="note" style="margin-top: 12px">Files sent to this console with Taildrop, from your own devices, are kept in
+        <code id="filesdir"></code>.</p>
+      <table>
+        <thead><tr><th>Name</th><th>Size</th><th>Received</th></tr></thead>
+        <tbody id="files"></tbody>
+      </table>
     </details>
   </section>
 
@@ -203,6 +220,15 @@
             <option value="low">Low: never takes time from a game (default)</option>
             <option value="high">High: shares the CPU with games; smoother Remote Play</option>
           </select>
+        </label>
+        <label class="field">Folder for files received with Taildrop
+          <input type="text" id="set-receivedir" autocomplete="off">
+        </label>
+        <label class="field">Payload file to keep up to date
+          <input type="text" id="set-payloadpath" autocomplete="off" placeholder="None">
+          <span class="hint">Where the copy of <code>tailscale.elf</code> that starts with the console is kept, for
+            example <code>/data/pldmgr/payloads/Tailscale/tailscale.elf</code>. Installing an update from this
+            page then replaces that file too. Empty: only the running copy is updated, until the next restart.</span>
         </label>
         <label class="field">Status page address
           <input type="text" id="set-webaddr" autocomplete="off">
@@ -409,11 +435,21 @@ async function refresh() {
   $('dot').className = 'dot ' + cls;
   $('version').textContent = 'ps5-tailscale ' + s.version;
 
-  $('updatepanel').classList.toggle('hidden', !s.latestVersion);
+  const upd = s.update || {};
+  const busy = ['downloading', 'verifying', 'installing'].includes(upd.state);
+  $('updatepanel').classList.toggle('hidden', !s.latestVersion && !upd.state);
   if (s.latestVersion) {
     $('updatetext').textContent = 'Version ' + s.latestVersion + ' is available. ';
     $('updatelink').href = s.updateURL;
   }
+  $('btn-update').classList.toggle('hidden', !s.canUpdate || busy);
+  $('btn-update').textContent = 'Install ' + (s.latestVersion || 'it');
+  show('updatestate', {
+    downloading: 'Downloading version ' + upd.version + (upd.percent ? ' (' + upd.percent + '%)' : '') + '…',
+    verifying: 'Checking the signature of version ' + upd.version + '…',
+    installing: 'Starting version ' + upd.version + '. This page reconnects by itself.',
+  }[upd.state] || '');
+  show('updatemsg', upd.state === 'failed' ? 'The update was not installed: ' + upd.error : updateRefused);
 
   // Key expiry, in whole days.
   let keyText = '', keyWarn = '';
@@ -481,6 +517,8 @@ async function refresh() {
 
   $('btn-lock').classList.toggle('hidden', !s.passwordSet);
 
+  refreshFiles();
+
   if ($('logbox').open) {
     try { $('logs').textContent = await (await api('/api/logs')).text(); } catch (e) {}
   }
@@ -502,6 +540,53 @@ async function act(path, confirmText, body) {
     refresh();
   }
 }
+
+// Received files. Asked for separately from the status, and only redrawn
+// when the list changed.
+let shownFiles = '';
+function fileSize(n) {
+  if (n < 1024) return n + ' B';
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
+  return (n < 10 ? n.toFixed(1) : Math.round(n)) + ' ' + units[i];
+}
+async function refreshFiles() {
+  let f;
+  try { f = await (await api('/api/files')).json(); } catch (e) { return; }
+  const key = JSON.stringify(f);
+  if (key === shownFiles) return;
+  shownFiles = key;
+  $('filespanel').classList.toggle('hidden', !f.files.length);
+  $('filescount').textContent = f.files.length;
+  $('filesdir').textContent = f.dir;
+  $('files').replaceChildren(...f.files.map(file => {
+    const tr = document.createElement('tr');
+    const name = document.createElement('td');
+    const a = document.createElement('a');
+    a.href = '/api/files/get?name=' + encodeURIComponent(file.name); a.textContent = file.name; a.download = file.name;
+    name.append(a);
+    const size = document.createElement('td'); size.textContent = fileSize(file.size);
+    const when = document.createElement('td'); when.textContent = new Date(file.time).toLocaleString(undefined, {dateStyle: 'medium', timeStyle: 'short'});
+    size.style.whiteSpace = when.style.whiteSpace = 'nowrap';
+    tr.append(name, size, when);
+    return tr;
+  }));
+}
+
+let updateRefused = '';   // why the daemon would not start an update
+$('btn-update').onclick = async () => {
+  const v = $('btn-update').textContent.replace('Install ', '');
+  if (!confirm('Download and install version ' + v + '?\n\nTailscale on this PS5 restarts, which interrupts a stream or Remote Play session that runs through it.')) return;
+  updateRefused = '';
+  try {
+    const r = await api('/api/update', {method: 'POST'});
+    if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+  } catch (e) {
+    if (e.message !== 'locked') updateRefused = e.message;
+  }
+  refresh();
+};
 
 $('btn-login').onclick = () => act('/api/login');
 $('btn-logout').onclick = () => act('/api/logout', 'Log this PS5 out of your tailnet?');
@@ -555,6 +640,8 @@ async function loadSettings() {
   $('set-proxy').value = c.httpProxyAddr;
   $('set-priority').value = c.priority;
   $('set-allowfrom').value = c.allowFrom;
+  $('set-receivedir').value = c.receiveDir;
+  $('set-payloadpath').value = c.payloadPath;
   $('set-webaddr').value = c.webAddr;
   $('set-updates').checked = c.checkUpdates;
   $('set-verbose').checked = c.verbose;
@@ -581,6 +668,8 @@ $('settingsform').onsubmit = async ev => {
     blockedPorts: blocked,
     priority: $('set-priority').value,
     allowFrom: $('set-allowfrom').value,
+    receiveDir: $('set-receivedir').value.trim(),
+    payloadPath: $('set-payloadpath').value.trim(),
     checkUpdates: $('set-updates').checked,
     verbose: $('set-verbose').checked,
   };

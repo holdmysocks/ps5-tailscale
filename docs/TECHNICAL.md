@@ -65,6 +65,22 @@ way is a failure in the SDK's crt, which runs before any of this.
   twice a day, compared with the running version. A newer release is shown
   on the page and announced once on the console; the announced version is
   kept in `/data/tailscale/update-notified`.
+- Installing an update (`selfupdate.go`, `relsig/`): on request only. The
+  release's `tailscale.elf.sig` names a version and a SHA-256 and carries an
+  Ed25519 signature over both. The daemon checks the signature against the
+  public key built into it, that the version is the release's and newer than
+  its own, downloads the payload to `/data/tailscale/update/`, compares the
+  hash, optionally replaces the copy named by `payloadPath` (temporary file,
+  then rename), and writes the payload to the ELF loader on 127.0.0.1:9021.
+  The new instance stops the old one as with any payload sent again, and
+  removes the download when it starts. The connection to the loader is kept
+  open until the old process exits, because it is the new payload's standard
+  output.
+- Taildrop (`taildrop.go`): tsnet does not link Taildrop in; importing
+  `tailscale.com/feature/taildrop` does. Received files wait in
+  `state/files/<login>-uid-<n>/`. The daemon long-polls for them, copies each
+  to `receiveDir` under a name that does not exist yet, and deletes it from
+  the holding area.
 - Who may connect (`access.go`): with `allowFrom` set to `own`, the TCP
   handler and the UDP relays ask Tailscale who the sender is (WhoIs) and
   serve only nodes of the same user as the console, from the console's own
@@ -155,6 +171,10 @@ apply `SOCK_NONBLOCK`/`SOCK_CLOEXEC` with `fcntl`.
 - The SDK's `kernel_mprotect()` rewrites the protection of the whole kernel
   map entry that contains the address. The loader first splits the text range
   off with an ordinary `mprotect()`.
+- `sendfile` on a socket fails with "socket is not connected". Go uses it
+  whenever a file is copied straight to a TCP connection (`io.Copy(conn,
+  file)`, `http.ServeContent` with a file), so the daemon hides the file
+  behind a plain reader in those places.
 - When the network is reconfigured (connection settings changed, Wi-Fi to
   Ethernet), listening sockets fail with errno 163, a Sony-specific code, and
   do not recover. The daemon's listeners reopen themselves

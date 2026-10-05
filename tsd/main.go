@@ -88,6 +88,10 @@ func main() {
 		debug.Printf(format, args...)
 	}
 
+	// What an update installed from the status page downloaded; this may be
+	// the very copy that is running now, and it is not needed again.
+	os.RemoveAll(filepath.Join(dataDir, updateDirName))
+
 	d := &daemon{cfg: cfg, cfgPath: filepath.Join(dataDir, "config.json"), logf: logf, debug: debug, console: console, started: time.Now()}
 	if err := d.run(); err != nil {
 		logf("fatal: %v", err)
@@ -121,7 +125,8 @@ type daemon struct {
 	webPort       uint16             // port of the status page
 	lastRelogin   time.Time
 	lastNetChange time.Time
-	latest        releaseInfo // newest release known, see update.go
+	latest        releaseInfo    // newest release known, see update.go
+	update        updateProgress // an update being installed, see selfupdate.go
 
 	sessions   sessions         // browsers that have entered the password
 	access     accessCache      // recent decisions about who may connect
@@ -193,6 +198,7 @@ func (d *daemon) run() error {
 	go d.exposeUDP(ctx)
 	go d.watchForUpdates(ctx)
 	go d.watchKeyExpiry(ctx)
+	go d.collectFiles(ctx)
 
 	sigc := make(chan os.Signal, 1)
 	signal.Notify(sigc, syscall.SIGTERM, syscall.SIGINT)

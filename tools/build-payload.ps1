@@ -7,6 +7,7 @@ param(
     [string]$Package = '.',
     [string]$Tags = '',
     [string]$Version = '',     # sets main.version in the Go program
+    [string[]]$Set = @(),      # extra Go variables, e.g. -Set main.releasesAPI=http://127.0.0.1:18099/latest.json
     [string]$MaxProcs = '',    # GOMAXPROCS for the Go program (launcher default: 4)
     [string]$GoDebug = '',     # GODEBUG value baked into the launcher
     [int]$Watchdog = 0,        # test builds: kill the process after this many seconds
@@ -28,6 +29,7 @@ $elf = Join-Path $out "$Name.elf"
 $ldflags = @()
 if (-not $KeepSymbols) { $ldflags += '-s', '-w' }
 if ($Version) { $ldflags += "-X main.version=$Version" }
+foreach ($s in $Set) { $ldflags += "-X $s" }
 $goArgs = @('build', '-buildmode=pie', '-trimpath', "-ldflags=$($ldflags -join ' ')", '-o', $bin)
 if ($Tags) { $goArgs += "-tags=$Tags" }
 $goArgs += $Package

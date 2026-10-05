@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -41,6 +42,8 @@ type settings struct {
 	BlockedPorts  []uint16       `json:"blockedPorts"`
 	Priority      string         `json:"priority"`
 	AllowFrom     string         `json:"allowFrom"`
+	PayloadPath   string         `json:"payloadPath"`
+	ReceiveDir    string         `json:"receiveDir"`
 	CheckUpdates  bool           `json:"checkUpdates"`
 	Verbose       bool           `json:"verbose"`
 
@@ -62,6 +65,8 @@ func settingsFromConfig(cfg config) settings {
 		BlockedPorts:  append([]uint16{}, cfg.BlockedPorts...),
 		Priority:      priorityLow,
 		AllowFrom:     accessAll,
+		PayloadPath:   cfg.PayloadPath,
+		ReceiveDir:    cfg.ReceiveDir,
 		CheckUpdates:  cfg.CheckUpdates,
 		Verbose:       cfg.Verbose,
 		PasswordSet:   cfg.PasswordHash != "",
@@ -107,6 +112,17 @@ func (s *settings) validate() error {
 	}
 	if slices.Contains(s.UDPPorts, 0) || slices.Contains(s.BlockedPorts, 0) {
 		return fmt.Errorf("0 is not a port")
+	}
+	s.PayloadPath = strings.TrimSpace(s.PayloadPath)
+	if err := validPayloadPath(s.PayloadPath); err != nil {
+		return fmt.Errorf("payload file: %w", err)
+	}
+	s.ReceiveDir = strings.TrimSpace(s.ReceiveDir)
+	if s.ReceiveDir == "" {
+		s.ReceiveDir = defaultReceiveDir
+	}
+	if !strings.HasPrefix(s.ReceiveDir, "/") || path.Clean(s.ReceiveDir) != s.ReceiveDir || s.ReceiveDir == "/" {
+		return fmt.Errorf("folder for received files: it must be a full path, such as %s", defaultReceiveDir)
 	}
 	if s.AllowFrom == "" {
 		s.AllowFrom = accessAll
@@ -205,6 +221,8 @@ func (d *daemon) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	if s.Priority == priorityHigh {
 		cfg.Priority = priorityHigh
 	}
+	cfg.PayloadPath = s.PayloadPath
+	cfg.ReceiveDir = s.ReceiveDir
 	cfg.AllowFrom = ""
 	if s.AllowFrom == accessOwn {
 		cfg.AllowFrom = accessOwn

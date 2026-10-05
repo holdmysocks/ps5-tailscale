@@ -14,11 +14,15 @@ import (
 // The daemon asks GitHub now and then whether a newer release exists, so that
 // the status page can say so. It never downloads or installs anything.
 
-const releasesAPI = "https://api.github.com/repos/holdmysocks/ps5-tailscale/releases/latest"
+// A variable so that test builds can point it elsewhere (-ldflags -X).
+var releasesAPI = "https://api.github.com/repos/holdmysocks/ps5-tailscale/releases/latest"
 
 type releaseInfo struct {
 	Version string // without the leading "v"
 	URL     string
+	// Assets maps the names of the release's files to where they are
+	// downloaded from.
+	Assets map[string]string
 }
 
 // parseVersion reads "v1.2.3" or "1.2.3-dev" as its three numbers.
@@ -74,11 +78,19 @@ func fetchLatestRelease(ctx context.Context, url string) (releaseInfo, error) {
 	var rel struct {
 		TagName string `json:"tag_name"`
 		HTMLURL string `json:"html_url"`
+		Assets  []struct {
+			Name string `json:"name"`
+			URL  string `json:"browser_download_url"`
+		} `json:"assets"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
 		return releaseInfo{}, err
 	}
-	return releaseInfo{Version: strings.TrimPrefix(rel.TagName, "v"), URL: rel.HTMLURL}, nil
+	info := releaseInfo{Version: strings.TrimPrefix(rel.TagName, "v"), URL: rel.HTMLURL, Assets: map[string]string{}}
+	for _, a := range rel.Assets {
+		info.Assets[a.Name] = a.URL
+	}
+	return info, nil
 }
 
 type httpStatusError struct{ status string }
