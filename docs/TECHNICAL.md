@@ -215,7 +215,7 @@ threads take turns. With it, the same test passes (5 collections in about
 
 ## Rest mode
 
-Observed once, for a rest of about a minute on Ethernet. The process is not
+Observed first for a rest of about a minute on Ethernet. The process is not
 killed: it is frozen with the rest of the console and continues afterwards.
 
 - Going to sleep, the network is taken down first. Every socket fails with
@@ -231,7 +231,9 @@ killed: it is frozen with the rest of the console and continues afterwards.
   answered through the tailnet address afterwards without anything being
   restarted.
 
-A rest of hours has not been tried, nor one on Wi-Fi.
+A rest of nine and a half hours went the same way: the monitor reported the
+time jump on waking and the same process carried on. Rest mode on Wi-Fi has
+not been tried.
 
 ## Home screen icon
 

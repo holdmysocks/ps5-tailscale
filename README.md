@@ -413,14 +413,14 @@ the update check, installing an update from the page (rehearsed with a test
 release, including replacing a second copy of the payload), receiving files
 with Taildrop, limiting connections to your own devices (with the
 console's owner's devices only; a refusal has not been seen for real), a
-short stay in rest mode (about a minute: the same process
-carried on and was back on the tailnet within a second of waking).
+stay in rest mode, both a minute and nine and a half hours: the same process
+carried on and was back on the tailnet after waking.
 
 Remote Play through the tailnet address works with Chiaki and with Asobi on
 iOS and Android.
 
-Not tested: hours in rest mode, switching between Wi-Fi and Ethernet while
-running, the complete Uninstall
+Not tested: switching between Wi-Fi and Ethernet while running, rest mode on
+Wi-Fi, the complete Uninstall
 on a console (its parts were tested separately), whether High priority
 improves Remote Play, a real Sunshine host on a non-default port, other
 firmware versions, coordination servers other than Tailscale's.

@@ -7,8 +7,8 @@
 //	go run ./cmd/signrelease backup -out FILE        passphrase-protected copy
 //	go run ./cmd/signrelease restore -in FILE        bring a backup onto this machine
 //
-// The key lives outside the repository, by default in the user's
-// configuration directory; PS5TS_SIGNING_KEY names another file. It is kept
+// The key lives outside the repository, by default in .ps5-tailscale in the
+// user's home directory; PS5TS_SIGNING_KEY names another file. It is kept
 // unencrypted there so that releases can be made without typing anything.
 // A backup is encrypted with a passphrase and is meant for somewhere else: a
 // NAS, a USB stick, a password manager.
@@ -79,11 +79,14 @@ func keyPath() (string, error) {
 	if p := os.Getenv("PS5TS_SIGNING_KEY"); p != "" {
 		return p, nil
 	}
-	dir, err := os.UserConfigDir()
+	// The home directory itself, not the configuration directory: on Windows
+	// that is AppData, which packaged apps see a private copy of, so a key
+	// created from inside one would be invisible everywhere else.
+	dir, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "ps5-tailscale", "release-signing.key"), nil
+	return filepath.Join(dir, ".ps5-tailscale", "release-signing.key"), nil
 }
 
 func b64(b []byte) string { return base64.StdEncoding.EncodeToString(b) }

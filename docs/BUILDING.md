@@ -79,8 +79,8 @@ Releases are signed with an Ed25519 key. Its public half is
 that stays out of the repository:
 
 ```
-%APPDATA%\ps5-tailscale\release-signing.key        (Windows)
-~/.config/ps5-tailscale/release-signing.key        (Linux)
+%USERPROFILE%\.ps5-tailscale\release-signing.key   (Windows)
+~/.ps5-tailscale/release-signing.key               (Linux, macOS)
 ```
 
 `PS5TS_SIGNING_KEY` names another location. The file is not encrypted, so
