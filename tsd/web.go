@@ -68,9 +68,11 @@ type statusInfo struct {
 	UpdateURL     string `json:"updateURL,omitempty"`
 	// CanUpdate says that the newer release can be installed from the page;
 	// Update reports on an installation in progress.
-	CanUpdate bool           `json:"canUpdate"`
-	Update    updateProgress `json:"update"`
-	Uptime    int64          `json:"uptimeSeconds"`
+	CanUpdate bool `json:"canUpdate"`
+	// PayloadPath is the copy an update replaces as well, if one is set.
+	PayloadPath string         `json:"payloadPath,omitempty"`
+	Update      updateProgress `json:"update"`
+	Uptime      int64          `json:"uptimeSeconds"`
 }
 
 // webHandler builds the status page and its API.
@@ -208,6 +210,7 @@ func (d *daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 		info.CanUpdate = canInstall(d.latest)
 	}
 	info.Update = d.update
+	info.PayloadPath = d.cfg.PayloadPath
 	d.mu.Unlock()
 	info.UDPPorts = []uint16{}
 	if d.udp != nil {

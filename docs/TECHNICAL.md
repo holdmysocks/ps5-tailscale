@@ -66,7 +66,7 @@ way is a failure in the SDK's crt, which runs before any of this.
   on the page and announced once on the console; the announced version is
   kept in `/data/tailscale/update-notified`.
 - Installing an update (`selfupdate.go`, `relsig/`): on request only. The
-  release's `tailscale.elf.sig` names a version and a SHA-256 and carries an
+  release's `tailscale-<version>.elf.sig` names a version and a SHA-256 and carries an
   Ed25519 signature over both. The daemon checks the signature against the
   public key built into it, that the version is the release's and newer than
   its own, downloads the payload to `/data/tailscale/update/`, compares the
@@ -163,7 +163,12 @@ apply `SOCK_NONBLOCK`/`SOCK_CLOEXEC` with `fcntl`.
   blocks and hands the converted entries out across calls.
 - Unix domain sockets cannot be bound on `/data`.
 - There is no `/etc/resolv.conf` and no CA bundle. Go's resolver falls back
-  to `127.0.0.1:53`; the daemon imports `x509roots/fallback` for TLS roots.
+  to `127.0.0.1:53`, which only answers if a DNS payload runs on the
+  console. The daemon therefore installs its own resolver (`dns.go`): it
+  probes `127.0.0.1:53`, the default gateway and three public resolvers,
+  uses the first that answers, and checks again every five minutes or when
+  the network changes. The daemon imports `x509roots/fallback` for TLS
+  roots.
 - A payload's stdin, stdout and stderr are the ELF loader's TCP connection.
   Go kills a process whose write to fd 1 or 2 fails with `EPIPE`, so the
   daemon moves that connection to another descriptor and points 1 and 2 at

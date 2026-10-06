@@ -51,10 +51,14 @@ Tested on firmware 13.42 with elfldr 0.26.
 
 ## Install
 
-There is one file, `tailscale.elf`, and it is an ordinary payload: running
-it starts Tailscale.
+There is one file, `tailscale-<version>.elf` (for example
+`tailscale-0.6.1.elf`), and it is an ordinary payload: running it starts
+Tailscale. The examples below call it `tailscale.elf`; use the name of the
+file you downloaded, or rename it.
 
-1. Download `tailscale.elf` from the [latest release](../../releases/latest).
+1. Download `tailscale-<version>.elf` from the
+   [latest release](../../releases/latest). The `.sig` file next to it is
+   for the status page's Install button; you do not need it.
 2. Send it to the console's ELF loader. Any payload sender works:
 
    ```bash
@@ -76,11 +80,15 @@ run also adds a **Tailscale** icon to the home screen (media section) that
 opens the status page.
 
 Tailscale runs until the console restarts. After a restart and jailbreak,
-send `tailscale.elf` again; the login and settings are kept. If you use a
-payload manager or autoloader, add the file there like any other payload.
+send the file again; the login and settings are kept. If you use a payload
+manager or autoloader, add the file there like any other payload.
 
-To update, use the new `tailscale.elf` in place of the old one. Sending it
-while Tailscale is running replaces the running copy.
+To update, use the new file in place of the old one. Sending it while
+Tailscale is running replaces the running copy. The file name changes with
+every release, so **check your autoload settings after updating**: a payload
+manager or autoloader that still points at the old file starts the old
+version with the console, or nothing if you deleted it. Renaming the new file
+to the name your autoload entry uses avoids touching the entry.
 
 ## Using it
 
@@ -150,11 +158,18 @@ shows a notification once. **Install** downloads the release, checks that it
 is signed with this project's release key and is the version it claims to be,
 and starts it; the login and settings are kept. Nothing is ever installed
 without that button being pressed. It needs an ELF loader on port 9021, like
-sending the payload by hand does. If you keep `tailscale.elf` in a payload
-manager or autoloader so that it starts with the console, put that file's
-path under **Payload file to keep up to date** in the settings, for example
-`/data/pldmgr/payloads/Tailscale/tailscale.elf`; the update then replaces
-that copy as well. Otherwise the old version is back after the next restart.
+sending the payload by hand does.
+
+Installing from the page replaces the copy that is running, not the file
+your payload manager or autoloader starts with the console. **Check your
+autoload settings after updating**, or the old version is back after the
+next restart. To have that file replaced as well, put its path under
+**Payload file to keep up to date** in the settings, for example
+`/data/pldmgr/payloads/Tailscale/tailscale.elf`. The file keeps the name it
+has there, whatever version is in it.
+
+Releases up to 0.6.0 cannot install later ones from the page, because the
+release files were renamed after 0.6.0; update those by hand once.
 
 **Devices.** The list is grouped into your tailnet's devices and devices
 shared with you, and marks the ones that can be used as an exit node. It can
@@ -331,6 +346,13 @@ Left to do by hand:
   `127.0.0.1` (or `127.0.0.1:<port>` for a host on another port), and the
   Sunshine host must be listed on the status page with the port its Sunshine
   uses.
+- **It stays on "Starting", or the update check never finds anything.** The
+  daemon looks names up itself: at a DNS payload on the console
+  (`127.0.0.1:53`) if one is running, otherwise at your router, otherwise at
+  a public resolver (1.1.1.1, 8.8.8.8, 9.9.9.9). The log says which one it
+  uses in a line starting with `DNS:`. If none answers, the console has no
+  working internet connection for payloads. The DNS server set in the PS5's
+  network settings plays no part.
 - **"Not logged in" after logging in.** Press **Log in again** for a fresh
   link.
 - **Forgot the status page password.** Delete the `passwordHash` line from
@@ -354,6 +376,10 @@ Left to do by hand:
 - The local forwards and the proxy are for the console's own apps and are
   not exposed to the tailnet.
 - With update checks on, the console contacts `api.github.com` twice a day.
+- Name lookups by the daemon go to the console's DNS payload if there is
+  one, otherwise to your router or a public resolver. They are only the
+  daemon's own lookups (Tailscale's servers, GitHub, what you send through
+  the HTTP proxy), not the console's.
 - An update is only installed when **Install** is pressed, and only if it
   carries a valid signature made with the project's release key, which is
   not kept on GitHub. A release put up by someone who got into the GitHub

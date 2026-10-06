@@ -65,7 +65,9 @@ the launcher.
 ```
 
 builds the payload and puts three files in `out\release-1.2.3`:
-`tailscale.elf`, its signature `tailscale.elf.sig`, and `SHA256SUMS.txt`.
+`tailscale-1.2.3.elf`, its signature `tailscale-1.2.3.elf.sig`, and
+`SHA256SUMS.txt`. The version in the file name is what the status page looks
+for (`payloadAssetName` in `tsd\selfupdate.go`).
 Attach all three to the GitHub release, and tag it `v1.2.3`. The status
 page's **Install** button only offers a release that has the first two, and
 only installs it if the signature is good and is for that very version.

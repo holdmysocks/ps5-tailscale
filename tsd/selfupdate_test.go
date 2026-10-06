@@ -66,14 +66,18 @@ func TestBuiltInKeyIsValid(t *testing.T) {
 
 func TestCanInstall(t *testing.T) {
 	withVersion(t, "1.0.0")
-	both := map[string]string{"tailscale.elf": "u1", "tailscale.elf.sig": "u2"}
+	both := map[string]string{"tailscale-1.1.0.elf": "u1", "tailscale-1.1.0.elf.sig": "u2"}
+	oldNames := map[string]string{"tailscale.elf": "u1", "tailscale.elf.sig": "u2"}
+	otherVersion := map[string]string{"tailscale-1.0.9.elf": "u1", "tailscale-1.0.9.elf.sig": "u2"}
 	for _, tt := range []struct {
 		rel  releaseInfo
 		want bool
 	}{
 		{releaseInfo{Version: "1.1.0", Assets: both}, true},
 		{releaseInfo{Version: "1.0.0", Assets: both}, false},
-		{releaseInfo{Version: "1.1.0", Assets: map[string]string{"tailscale.elf": "u1"}}, false},
+		{releaseInfo{Version: "1.1.0", Assets: oldNames}, true},
+		{releaseInfo{Version: "1.1.0", Assets: otherVersion}, false},
+		{releaseInfo{Version: "1.1.0", Assets: map[string]string{"tailscale-1.1.0.elf": "u1"}}, false},
 		{releaseInfo{Version: "1.1.0"}, false},
 	} {
 		if got := canInstall(tt.rel); got != tt.want {

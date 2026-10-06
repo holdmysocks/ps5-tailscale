@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -64,6 +65,14 @@ func main() {
 	}
 	logf("ps5-tailscale %s starting, hostname %q, web UI on %s", version, cfg.Hostname, cfg.WebAddr)
 
+	// On the console, name lookups go to whichever DNS server answers; see
+	// dns.go. Elsewhere the system's resolver is left alone.
+	var dns *dnsPicker
+	if runtime.GOOS == "freebsd" {
+		dns = newDNSPicker(logf)
+		dns.install()
+	}
+
 	// A payload that is sent again replaces the running instance, which is
 	// how an upgrade or a restart is done.
 	if stopRunningInstance(cfg.WebAddr) {
@@ -92,7 +101,7 @@ func main() {
 	// the very copy that is running now, and it is not needed again.
 	os.RemoveAll(filepath.Join(dataDir, updateDirName))
 
-	d := &daemon{cfg: cfg, cfgPath: filepath.Join(dataDir, "config.json"), logf: logf, debug: debug, console: console, started: time.Now()}
+	d := &daemon{dns: dns, cfg: cfg, cfgPath: filepath.Join(dataDir, "config.json"), logf: logf, debug: debug, console: console, started: time.Now()}
 	if err := d.run(); err != nil {
 		logf("fatal: %v", err)
 		notify("Tailscale failed to start:\n%v", err)
@@ -111,6 +120,7 @@ type daemon struct {
 	srv *tsnet.Server
 	lc  *local.Client
 	fwd *forwarder
+	dns *dnsPicker // nil when the system's resolver is used
 	udp *udpExposer
 
 	mu       sync.Mutex
@@ -256,6 +266,9 @@ func (d *daemon) networkChanged() {
 	d.lastNetChange = time.Now()
 	lc := d.lc
 	d.mu.Unlock()
+	if d.dns != nil {
+		d.dns.reset()
+	}
 	if recent || lc == nil {
 		return
 	}

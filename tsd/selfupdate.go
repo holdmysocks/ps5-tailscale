@@ -33,7 +33,6 @@ import (
 var updatePublicKey = "HUcHCXGe3vNEeyt4frmoKZUqYDamdA1dzsr+Hsybda0="
 
 const (
-	payloadAsset  = "tailscale.elf"
 	maxPayload    = 128 << 20
 	loaderAddr    = "127.0.0.1:9021"
 	updateDirName = "update"
@@ -57,7 +56,24 @@ func (d *daemon) setUpdate(p updateProgress) {
 
 // canInstall reports whether rel can be installed from the status page.
 func canInstall(rel releaseInfo) bool {
-	return newerVersion(version, rel.Version) && rel.Assets[payloadAsset] != "" && rel.Assets[payloadAsset+relsig.FileSuffix] != ""
+	_, _, _, ok := releaseAssets(rel)
+	return ok && newerVersion(version, rel.Version)
+}
+
+// payloadAssetName is what the payload of a release is called: the version is
+// part of the name, so that a downloaded file says what it is.
+func payloadAssetName(ver string) string { return "tailscale-" + ver + ".elf" }
+
+// releaseAssets finds a release's payload and its signature. Releases up to
+// 0.6.0 called the payload plain "tailscale.elf"; that name is still
+// understood.
+func releaseAssets(rel releaseInfo) (name, payloadURL, sigURL string, ok bool) {
+	for _, name := range []string{payloadAssetName(rel.Version), "tailscale.elf"} {
+		if p, s := rel.Assets[name], rel.Assets[name+relsig.FileSuffix]; p != "" && s != "" {
+			return name, p, s, true
+		}
+	}
+	return "", "", "", false
 }
 
 // startUpdate begins installing the newest known release. It returns at
@@ -96,7 +112,11 @@ func (d *daemon) runUpdate(rel releaseInfo) error {
 	defer cancel()
 
 	// The signature first: it is small, and says what the payload must be.
-	sigBytes, err := httpGetSmall(ctx, rel.Assets[payloadAsset+relsig.FileSuffix])
+	name, payloadURL, sigURL, ok := releaseAssets(rel)
+	if !ok {
+		return errors.New("that release has no signed payload")
+	}
+	sigBytes, err := httpGetSmall(ctx, sigURL)
 	if err != nil {
 		return fmt.Errorf("downloading the signature: %w", err)
 	}
@@ -109,8 +129,8 @@ func (d *daemon) runUpdate(rel releaseInfo) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	file := filepath.Join(dir, payloadAsset)
-	sum, err := d.download(ctx, rel.Assets[payloadAsset], file, rel.Version)
+	file := filepath.Join(dir, name)
+	sum, err := d.download(ctx, payloadURL, file, rel.Version)
 	if err != nil {
 		os.Remove(file)
 		return fmt.Errorf("downloading the payload: %w", err)

@@ -1,6 +1,6 @@
 # Build the files of a release into out\release-<version>:
-#   tailscale.elf       the payload
-#   tailscale.elf.sig   its signature, which the status page's "Install" checks
+#   tailscale-<version>.elf       the payload
+#   tailscale-<version>.elf.sig   its signature, which the status page's "Install" checks
 #   SHA256SUMS.txt
 #
 #   .\tools\make-release.ps1 -Version 1.2.3
@@ -19,7 +19,8 @@ if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "version must look like 1.2.3,
 
 $rel = Join-Path $DevRoot "out\release-$Version"
 New-Item -ItemType Directory -Force $rel | Out-Null
-$elf = Join-Path $rel 'tailscale.elf'
+$name = "tailscale-$Version.elf"   # the name the status page's Install looks for
+$elf = Join-Path $rel $name
 Copy-Item (Join-Path $DevRoot 'out\tailscale.elf') $elf -Force
 
 Push-Location (Join-Path $DevRoot 'tsd')
@@ -37,7 +38,7 @@ try {
 } finally { Pop-Location }
 
 $hash = (Get-FileHash $elf -Algorithm SHA256).Hash.ToLower()
-[IO.File]::WriteAllText((Join-Path $rel 'SHA256SUMS.txt'), "$hash  tailscale.elf`n")
+[IO.File]::WriteAllText((Join-Path $rel 'SHA256SUMS.txt'), "$hash  $name`n")
 
 Get-ChildItem $rel | Select-Object Name, Length | Format-Table -AutoSize
 Write-Host "release files are in $rel"

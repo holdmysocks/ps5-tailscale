@@ -104,6 +104,7 @@
     <div class="actions" style="margin-top: 12px">
       <button id="btn-update" class="hidden">Install it</button>
     </div>
+    <p class="health hidden" id="updatewarn" style="padding-left: 0"></p>
     <p class="note hidden" id="updatestate" style="margin: 12px 0 0"></p>
     <p class="msg hidden" id="updatemsg"></p>
   </section>
@@ -444,6 +445,12 @@ async function refresh() {
   }
   $('btn-update').classList.toggle('hidden', !s.canUpdate || busy);
   $('btn-update').textContent = 'Install ' + (s.latestVersion || 'it');
+  // Installing replaces the running copy. What starts with the console is
+  // a file somewhere else, which the user has to keep an eye on.
+  autoloadWarning = s.payloadPath
+    ? 'Installing also replaces the copy at ' + s.payloadPath + '. Afterwards, check your autoload settings: your payload manager or autoloader must still start that file.'
+    : 'After installing, check your autoload settings. If a payload manager or autoloader starts an older Tailscale file with the console, the old version comes back after a restart: replace that file with the new release, or name it under Settings ("Payload file to keep up to date") before installing.';
+  show('updatewarn', s.canUpdate && !busy ? autoloadWarning : '');
   show('updatestate', {
     downloading: 'Downloading version ' + upd.version + (upd.percent ? ' (' + upd.percent + '%)' : '') + '…',
     verifying: 'Checking the signature of version ' + upd.version + '…',
@@ -575,9 +582,10 @@ async function refreshFiles() {
 }
 
 let updateRefused = '';   // why the daemon would not start an update
+let autoloadWarning = '';
 $('btn-update').onclick = async () => {
   const v = $('btn-update').textContent.replace('Install ', '');
-  if (!confirm('Download and install version ' + v + '?\n\nTailscale on this PS5 restarts, which interrupts a stream or Remote Play session that runs through it.')) return;
+  if (!confirm('Download and install version ' + v + '?\n\nTailscale on this PS5 restarts, which interrupts a stream or Remote Play session that runs through it.\n\n' + autoloadWarning)) return;
   updateRefused = '';
   try {
     const r = await api('/api/update', {method: 'POST'});
