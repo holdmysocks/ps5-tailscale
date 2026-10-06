@@ -85,7 +85,7 @@ func (p *dnsPicker) pick(ctx context.Context) string {
 		case chosen == candidates[0]:
 			p.logf("DNS: using the console's own DNS at %s", chosen)
 		default:
-			p.logf("DNS: nothing answers at %s; using %s instead", candidates[0], chosen)
+			p.logf("DNS: nothing answers at %s; using %s instead (in order of preference: %v)", candidates[0], chosen, candidates)
 		}
 	}
 	p.server, p.working, p.checked = chosen, working, time.Now()
