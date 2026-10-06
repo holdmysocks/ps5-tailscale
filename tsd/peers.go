@@ -1,10 +1,17 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/netip"
 	"sort"
 	"strings"
+	"time"
 
 	"tailscale.com/ipn/ipnstate"
+	"tailscale.com/net/tsaddr"
+	"tailscale.com/tailcfg"
 )
 
 // The device list of the status page. A tailnet with a VPN add-on has
@@ -31,8 +38,13 @@ type peerInfo struct {
 	// and "used" for the one this console uses.
 	ExitNode string `json:"exitNode,omitempty"`
 	// Location is where an exit server says it is ("Vienna, Austria").
-	Location string   `json:"location,omitempty"`
-	Tags     []string `json:"tags,omitempty"`
+	Location string `json:"location,omitempty"`
+	// Conn says how traffic to the device travels right now: "direct",
+	// "relay" with Via naming the relay, or empty when there has been no
+	// traffic to it lately.
+	Conn string   `json:"conn,omitempty"`
+	Via  string   `json:"via,omitempty"`
+	Tags []string `json:"tags,omitempty"`
 }
 
 // peerCount counts the peers of one kind.
@@ -77,6 +89,7 @@ func newPeerInfo(p *ipnstate.PeerStatus, suffix string) peerInfo {
 	case p.ExitNodeOption:
 		pi.ExitNode = "offered"
 	}
+	pi.Conn, pi.Via = peerConn(p)
 	if l := p.Location; l != nil {
 		parts := []string{}
 		for _, s := range []string{l.City, l.Country} {
@@ -117,4 +130,64 @@ func peersFromStatus(st *ipnstate.Status, withVPN bool) (peers []peerInfo, vpn p
 		return peers[i].Name < peers[j].Name
 	})
 	return peers, vpn
+}
+
+// peerConn says how the console currently reaches a peer. A direct
+// connection goes straight between the two devices; a relayed one goes
+// through one of Tailscale's relay servers, or through a peer acting as one,
+// which is slower and is the first thing to look at when a stream stutters.
+func peerConn(p *ipnstate.PeerStatus) (conn, via string) {
+	switch {
+	case !p.Online || !p.Active:
+		return "", ""
+	case p.CurAddr != "":
+		return "direct", ""
+	case p.PeerRelay != "":
+		return "relay", "a peer relay"
+	case p.Relay != "":
+		return "relay", p.Relay
+	}
+	return "", ""
+}
+
+// pingResult is the answer of a connection test from the status page.
+type pingResult struct {
+	Conn      string  `json:"conn"`
+	Via       string  `json:"via,omitempty"`
+	LatencyMS float64 `json:"latencyMs"`
+}
+
+// handlePingPeer measures the connection to one device of the tailnet.
+func (d *daemon) handlePingPeer(w http.ResponseWriter, r *http.Request) {
+	ip, err := netip.ParseAddr(r.URL.Query().Get("ip"))
+	if err != nil || !tsaddr.IsTailscaleIP(ip) {
+		http.Error(w, "not a tailnet address", http.StatusBadRequest)
+		return
+	}
+	if d.lc == nil {
+		http.Error(w, "Tailscale is not running yet", http.StatusServiceUnavailable)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	res, err := d.lc.Ping(ctx, ip, tailcfg.PingDisco)
+	if err != nil {
+		http.Error(w, "no answer: "+err.Error(), http.StatusGatewayTimeout)
+		return
+	}
+	if res.Err != "" {
+		http.Error(w, "no answer: "+res.Err, http.StatusGatewayTimeout)
+		return
+	}
+	out := pingResult{LatencyMS: res.LatencySeconds * 1000}
+	switch {
+	case res.Endpoint != "":
+		out.Conn = "direct"
+	case res.PeerRelay != "":
+		out.Conn, out.Via = "relay", "a peer relay"
+	default:
+		out.Conn, out.Via = "relay", res.DERPRegionCode
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
 }

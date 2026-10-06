@@ -98,17 +98,8 @@ func (s *settings) validate() error {
 	if err := validateSunshineHosts(s.SunshineHosts); err != nil {
 		return err
 	}
-	for _, f := range s.Forwards {
-		if f.Proto != "tcp" && f.Proto != "udp" {
-			return fmt.Errorf("forward %v: the protocol must be tcp or udp", f)
-		}
-		if err := validListenAddr(f.Listen); err != nil {
-			return fmt.Errorf("forward %v: listen address: %w", f, err)
-		}
-		host, port, err := net.SplitHostPort(f.Target)
-		if err != nil || host == "" || !validHostName(host) || !validPort(port) {
-			return fmt.Errorf("forward %v: the target must be host:port", f)
-		}
+	if err := validateForwards(s.Forwards); err != nil {
+		return err
 	}
 	if slices.Contains(s.UDPPorts, 0) || slices.Contains(s.BlockedPorts, 0) {
 		return fmt.Errorf("0 is not a port")
@@ -135,6 +126,30 @@ func (s *settings) validate() error {
 	}
 	if s.Password != nil && len(*s.Password) > 0 && len(*s.Password) < 4 {
 		return fmt.Errorf("the password must be at least 4 characters")
+	}
+	return nil
+}
+
+// validateForwards checks a list of local forwards.
+func validateForwards(rules []forwardRule) error {
+	seen := map[string]bool{}
+	for _, f := range rules {
+		if f.Proto != "tcp" && f.Proto != "udp" {
+			return fmt.Errorf("forward %v: the protocol must be tcp or udp", f)
+		}
+		if err := validListenAddr(f.Listen); err != nil {
+			return fmt.Errorf("forward %v: listen address: %w", f, err)
+		}
+		host, port, err := net.SplitHostPort(f.Target)
+		if err != nil || host == "" || !validHostName(host) || !validPort(port) {
+			return fmt.Errorf("forward %v: the target must be a device and a port", f)
+		}
+		_, lport, _ := net.SplitHostPort(f.Listen)
+		if key := f.Proto + " " + lport; seen[key] {
+			return fmt.Errorf("two forwards use %s port %s on the console", f.Proto, lport)
+		} else {
+			seen[key] = true
+		}
 	}
 	return nil
 }
@@ -214,7 +229,11 @@ func (d *daemon) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		// panel of their own.
 		cfg.SunshineHosts = s.SunshineHosts
 	}
-	cfg.Forwards = s.Forwards
+	if s.Forwards != nil {
+		// Like the Sunshine hosts, the forwards have a panel of their own
+		// and are left alone when the settings form does not send them.
+		cfg.Forwards = s.Forwards
+	}
 	cfg.UDPPorts = s.UDPPorts
 	cfg.BlockedPorts = s.BlockedPorts
 	cfg.Priority = ""

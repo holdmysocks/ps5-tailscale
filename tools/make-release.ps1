@@ -7,7 +7,11 @@
 #
 # Needs the release signing key on this machine (see docs/BUILDING.md).
 param(
-    [Parameter(Mandatory = $true)][string]$Version
+    [Parameter(Mandatory = $true)][string]$Version,
+    # Also write the payload and its signature under the plain names
+    # tailscale.elf and tailscale.elf.sig, which is what the Install button of
+    # 0.6.0 looks for. Attach them as well to let 0.6.0 install this release.
+    [switch]$PlainName
 )
 
 $ErrorActionPreference = 'Stop'
@@ -38,7 +42,14 @@ try {
 } finally { Pop-Location }
 
 $hash = (Get-FileHash $elf -Algorithm SHA256).Hash.ToLower()
-[IO.File]::WriteAllText((Join-Path $rel 'SHA256SUMS.txt'), "$hash  $name`n")
+$sums = "$hash  $name`n"
+if ($PlainName) {
+    # The same bytes, so the same signature is valid for both.
+    Copy-Item $elf (Join-Path $rel 'tailscale.elf') -Force
+    Copy-Item "$elf.sig" (Join-Path $rel 'tailscale.elf.sig') -Force
+    $sums += "$hash  tailscale.elf`n"
+}
+[IO.File]::WriteAllText((Join-Path $rel 'SHA256SUMS.txt'), $sums)
 
 Get-ChildItem $rel | Select-Object Name, Length | Format-Table -AutoSize
 Write-Host "release files are in $rel"

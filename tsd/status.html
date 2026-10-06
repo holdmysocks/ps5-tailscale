@@ -55,6 +55,9 @@
     /* Label above value, so that names and addresses get the full width. */
     dl { grid-template-columns: 1fr; gap: 0; }
     dt { font-size: 13px; margin-top: 10px; }
+    /* The device gets a line of its own; port, protocol and Remove share the next. */
+    .fwd .hostrow { flex-wrap: wrap; }
+    .fwd .hostrow .host { flex: 1 1 100%; }
   }
   .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
   button {
@@ -90,6 +93,11 @@
   .hostrow { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
   .hostrow .host { flex: 3; min-width: 0; }
   .hostrow .port { flex: 1; min-width: 90px; }
+  .hostrow select { flex: 0 0 auto; width: auto; }
+  .fwd { margin-bottom: 12px; }
+  .fwd .hostrow { margin-bottom: 4px; }
+  .fwd .use { font-size: 14px; color: var(--muted); }
+  button.link { border: 0; padding: 0; background: none; color: var(--accent); font-size: inherit; text-decoration: underline; cursor: pointer; }
   .hidden { display: none; }
 </style>
 </head>
@@ -163,6 +171,22 @@
     </details>
   </section>
 
+  <section class="panel hidden" id="reachpanel">
+    <h2>Reach a device from this PS5</h2>
+    <p class="note">Apps and the browser on the PS5 cannot open tailnet addresses. Add the device and the port you
+      need, and on the PS5 use the address shown for it instead.</p>
+    <div id="fwdrows"></div>
+    <div class="actions">
+      <button id="btn-addfwd" class="small">Add a device</button>
+      <button id="btn-fwds">Save</button>
+    </div>
+    <p class="hint">Example: a media server on port 8096 of <i>my-nas</i> becomes <code>127.0.0.1:8096</code> on the
+      PS5. Pages that insist on their own name, and HTTPS sites, may not work this way. Game streaming has its own
+      panel below.</p>
+    <p class="okmsg hidden" id="fwdok"></p>
+    <p class="msg hidden" id="fwdmsg"></p>
+  </section>
+
   <section class="panel hidden" id="streampanel">
     <h2>Game streaming (Moonlight to Sunshine)</h2>
     <p class="note">Apps on the PS5 cannot reach tailnet addresses directly. List the devices that run Sunshine and
@@ -207,10 +231,6 @@
         <label class="field">TCP ports never exposed to the tailnet
           <input type="text" id="set-blocked" autocomplete="off">
           <span class="hint">Comma separated. Every other open TCP port on the console is reachable.</span>
-        </label>
-        <label class="field">Extra forwards from the console to tailnet hosts
-          <textarea id="set-forwards" spellcheck="false"></textarea>
-          <span class="hint">One per line: <code>tcp 127.0.0.1:8096 my-nas:8096</code> (protocol, local address, tailnet host and port).</span>
         </label>
         <label class="field">HTTP proxy address
           <input type="text" id="set-proxy" autocomplete="off" placeholder="Off">
@@ -380,6 +400,28 @@ function peerMatches(p, words) {
   return words.every(w => text.includes(w));
 }
 
+// How the console reaches a device: straight, or through a relay server,
+// which is slower. Measured on request, since measuring wakes the connection.
+const pings = {};   // tailnet address -> last test result, as text
+function connText(conn, via) {
+  return conn === 'direct' ? 'direct' : conn === 'relay' ? 'relayed' + (via ? ' via ' + via : '') : '';
+}
+async function testPeer(ip) {
+  pings[ip] = 'testing…'; shownPeers = ''; renderPeers();
+  try {
+    const r = await api('/api/pingpeer?ip=' + encodeURIComponent(ip), {method: 'POST'});
+    if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+    const p = await r.json();
+    pings[ip] = connText(p.conn, p.via) + ', ' + (p.latencyMs < 10 ? p.latencyMs.toFixed(1) : Math.round(p.latencyMs)) + ' ms';
+  } catch (e) {
+    pings[ip] = e.message === 'locked' ? '' : 'no answer';
+  }
+  shownPeers = ''; renderPeers();
+  // A measurement says nothing about a minute from now.
+  const shown = pings[ip];
+  setTimeout(() => { if (pings[ip] === shown) { delete pings[ip]; shownPeers = ''; renderPeers(); } }, 60000);
+}
+
 function peerRow(p) {
   const tr = document.createElement('tr');
   const notes = [];
@@ -387,11 +429,23 @@ function peerRow(p) {
   else if (p.exitNode) notes.push('exit node');
   if (p.location) notes.push(p.location);
   if (p.tags) notes.push(p.tags.join(', '));
-  for (const [v, mono, note] of [[p.name, false, notes.join(' · ')], [p.ip, true], [p.os], [p.online ? 'online' : 'offline']]) {
+  if (pings[p.ip]) notes.push(pings[p.ip]);
+  else if (p.conn) notes.push(connText(p.conn, p.via));
+  for (const [v, mono, first] of [[p.name, false, true], [p.ip, true], [p.os], [p.online ? 'online' : 'offline']]) {
     const td = document.createElement('td');
     if (!p.online) td.className = 'off';
     if (mono) td.append(v ? copyable(v) : ''); else td.textContent = v;
-    if (note) { const n = document.createElement('span'); n.className = 'tag'; n.textContent = note; td.append(n); }
+    if (first && (notes.length || (p.online && p.ip))) {
+      const n = document.createElement('span'); n.className = 'tag'; n.textContent = notes.join(' · ');
+      if (p.online && p.ip && pings[p.ip] !== 'testing…') {
+        if (notes.length) n.append(' · ');
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'link'; b.textContent = 'test'; b.title = 'Measure the connection to this device';
+        b.onclick = () => testPeer(p.ip);
+        n.append(b);
+      }
+      td.append(n);
+    }
     tr.append(td);
   }
   return tr;
@@ -403,7 +457,7 @@ function renderPeers() {
   const shown = peers.filter(p => (!onlineOnly || p.online) && peerMatches(p, words));
   // Rebuilding hundreds of rows every few seconds is wasteful; only do it
   // when what is shown changed.
-  const key = JSON.stringify(shown);
+  const key = JSON.stringify([shown, pings]);
   if (key === shownPeers) return;
   shownPeers = key;
   const groups = kinds.map(([kind, title]) => [title, shown.filter(p => p.kind === kind)]).filter(g => g[1].length);
@@ -419,6 +473,53 @@ function renderPeers() {
   }
   $('peers').replaceChildren(...rows);
   $('peernone').classList.toggle('hidden', shown.length > 0);
+}
+
+// "Reach a device from this PS5": forwards from a port on the console to a
+// device on the tailnet. A row keeps the local address it was saved with; a
+// new row gets one when it is saved.
+let fwdsDirty = false;
+let lastFwds = '';
+function fwdRow(rule) {
+  const wrap = document.createElement('div');
+  wrap.className = 'fwd';
+  wrap.dataset.listen = rule ? rule.listen : '';
+  const i = rule ? rule.target.lastIndexOf(':') : -1;
+  const div = document.createElement('div');
+  div.className = 'hostrow';
+  const h = document.createElement('input');
+  h.type = 'text'; h.className = 'host'; h.placeholder = 'Device name or address'; h.value = rule ? rule.target.slice(0, i).replace(/^\[|\]$/g, '') : '';
+  h.setAttribute('list', 'peernames'); h.setAttribute('aria-label', 'Device'); h.autocomplete = 'off';
+  const p = document.createElement('input');
+  p.type = 'number'; p.className = 'port'; p.placeholder = 'Port'; p.min = 1; p.max = 65535;
+  p.value = rule ? rule.target.slice(i + 1) : ''; p.setAttribute('aria-label', 'Port on the device');
+  const proto = document.createElement('select');
+  proto.setAttribute('aria-label', 'Protocol');
+  for (const v of ['tcp', 'udp']) { const o = document.createElement('option'); o.value = v; o.textContent = v.toUpperCase(); proto.append(o); }
+  proto.value = rule ? rule.proto : 'tcp';
+  const x = document.createElement('button');
+  x.type = 'button'; x.className = 'small'; x.textContent = 'Remove';
+  x.onclick = () => { wrap.remove(); fwdsDirty = true; };
+  const use = document.createElement('div');
+  use.className = 'use';
+  if (rule) { use.append('On the PS5 use '); use.append(copyable(rule.listen)); }
+  else use.textContent = 'The address to use on the PS5 appears here after saving.';
+  // Changing what a row points at keeps its address; changing the port or
+  // protocol gives it a new one, so it stays easy to recognise.
+  h.oninput = () => { fwdsDirty = true; };
+  p.oninput = proto.onchange = () => { fwdsDirty = true; wrap.dataset.listen = ''; use.textContent = 'The address to use on the PS5 appears here after saving.'; };
+  div.append(h, p, proto, x);
+  wrap.append(div, use);
+  return wrap;
+}
+
+// localPortFor picks the port on the console for a new forward: the same
+// number as on the device where that is possible, so it is easy to remember.
+function localPortFor(port, proto, taken) {
+  let local = port < 1024 ? port + 8000 : port;
+  while (taken.has(proto + local) || local === 8090) local++;
+  taken.add(proto + local);
+  return local;
 }
 
 async function refresh() {
@@ -475,7 +576,7 @@ async function refresh() {
   }
   show('keywarn', keyWarn);
 
-  const factsNow = JSON.stringify([s.dnsName, s.hostname, s.ips, s.tailnet, s.udpPorts, s.proxy, s.priority, s.allowFrom, keyText]);
+  const factsNow = JSON.stringify([s.dnsName, s.hostname, s.ips, s.tailnet, s.udpPorts, s.proxy, s.priority, s.allowFrom, keyText, s.dns]);
   if (factsNow !== shownFacts) {
     shownFacts = factsNow;
     const dl = $('facts');
@@ -486,6 +587,7 @@ async function refresh() {
     if (s.ips.length) row(dl, 'Reachable from tailnet', 'every open TCP port' + (s.udpPorts.length ? '; UDP ' + s.udpPorts.join(', ') + ' (Remote Play)' : '')
       + (s.allowFrom === 'own' ? '; only from your own devices' : ''));
     if (keyText) row(dl, 'Key expires', keyText);
+    if (s.dns) row(dl, 'Name lookups', s.dns);
     if (s.proxy) row(dl, 'HTTP proxy', s.proxy, true);
     if (s.priority === 'high') row(dl, 'Priority', 'High');
   }
@@ -515,6 +617,12 @@ async function refresh() {
   // the user is not in the middle of editing them.
   $('streampanel').classList.toggle('hidden', s.state !== 'Running' && !s.sunshineHosts.length);
   $('peernames').replaceChildren(...devices.map(p => { const o = document.createElement('option'); o.value = p.name; return o; }));
+  $('reachpanel').classList.toggle('hidden', s.state !== 'Running' && !s.userForwards.length);
+  const fwdsNow = JSON.stringify(s.userForwards);
+  if (!fwdsDirty && fwdsNow !== lastFwds) {
+    lastFwds = fwdsNow;
+    $('fwdrows').replaceChildren(...s.userForwards.map(fwdRow));
+  }
   const hostsNow = JSON.stringify(s.sunshineHosts);
   if (!hostsDirty && hostsNow !== lastHosts) {
     lastHosts = hostsNow;
@@ -621,6 +729,44 @@ $('lockform').onsubmit = async ev => {
   refresh();
 };
 
+// Forwards to tailnet devices.
+$('btn-addfwd').onclick = () => { $('fwdrows').append(fwdRow(null)); fwdsDirty = true; };
+$('btn-fwds').onclick = async () => {
+  show('fwdmsg', ''); show('fwdok', '');
+  const rows = [...$('fwdrows').children].map(w => ({
+    host: w.querySelector('.host').value.trim(), port: parseInt(w.querySelector('.port').value, 10) || 0,
+    proto: w.querySelector('select').value, listen: w.dataset.listen,
+  })).filter(r => r.host || r.port);
+  for (const r of rows) {
+    if (!r.host || !(r.port >= 1 && r.port <= 65535)) { show('fwdmsg', 'Each line needs a device and a port from 1 to 65535.'); return; }
+  }
+  // Ports on the console that are spoken for: rows that keep their address.
+  const taken = new Set(rows.filter(r => r.listen).map(r => r.proto + r.listen.slice(r.listen.lastIndexOf(':') + 1)));
+  const rules = rows.map(r => ({
+    proto: r.proto,
+    listen: r.listen || '127.0.0.1:' + localPortFor(r.port, r.proto, taken),
+    target: (r.host.includes(':') ? '[' + r.host + ']' : r.host) + ':' + r.port,
+  }));
+  try {
+    for (let attempt = 0; ; attempt++) {
+      const resp = await api('/api/forwards', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(rules)});
+      const text = (await resp.text()).trim();
+      if (resp.ok) break;
+      // A port on the console that something else uses: if it was picked
+      // here, pick the next one and try again.
+      const takenPort = resp.headers.get('X-Port-Taken');
+      const n = rules.findIndex((r, k) => !rows[k].listen && r.proto + ' ' + r.listen === takenPort);
+      if (resp.status !== 409 || n < 0 || attempt >= 30) throw new Error(text || resp.statusText);
+      rules[n].listen = '127.0.0.1:' + localPortFor(parseInt(rules[n].listen.split(':').pop(), 10) + 1, rules[n].proto, taken);
+    }
+    show('fwdok', rules.length ? 'Saved. Use the addresses shown on the PS5.' : 'Saved.');
+  } catch (e) {
+    if (e.message !== 'locked') show('fwdmsg', e.message);
+  }
+  fwdsDirty = false; lastFwds = '';
+  refresh();
+};
+
 // Game streaming hosts.
 $('btn-addhost').onclick = () => { $('hostrows').append(hostRow('', 0)); hostsDirty = true; };
 $('btn-sunshine').onclick = async () => {
@@ -646,7 +792,6 @@ async function loadSettings() {
   $('set-pwremove-row').classList.toggle('hidden', !c.passwordSet);
   $('set-udp').value = c.udpPorts.join(', ');
   $('set-blocked').value = c.blockedPorts.join(', ');
-  $('set-forwards').value = c.forwards.map(f => f.proto + ' ' + f.listen + ' ' + f.target).join('\n');
   $('set-proxy').value = c.httpProxyAddr;
   $('set-priority').value = c.priority;
   $('set-allowfrom').value = c.allowFrom;
@@ -663,17 +808,10 @@ $('settingsform').onsubmit = async ev => {
   show('settingsmsg', ''); show('settingsok', '');
   const udp = ports($('set-udp').value), blocked = ports($('set-blocked').value);
   if (udp.concat(blocked).some(p => !(p >= 1 && p <= 65535))) { show('settingsmsg', 'Ports must be numbers from 1 to 65535.'); return; }
-  const forwards = [];
-  for (const line of $('set-forwards').value.split('\n').map(l => l.trim()).filter(l => l)) {
-    const parts = line.split(/\s+/);
-    if (parts.length !== 3) { show('settingsmsg', 'Each forward needs three parts: protocol, local address, target. Problem: ' + line); return; }
-    forwards.push({proto: parts[0].toLowerCase(), listen: parts[1], target: parts[2]});
-  }
   const c = {
     hostname: $('set-hostname').value.trim(),
     webAddr: $('set-webaddr').value.trim(),
     httpProxyAddr: $('set-proxy').value.trim(),
-    forwards: forwards,
     udpPorts: udp,
     blockedPorts: blocked,
     priority: $('set-priority').value,

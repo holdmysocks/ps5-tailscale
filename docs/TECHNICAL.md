@@ -81,6 +81,12 @@ way is a failure in the SDK's crt, which runs before any of this.
   `state/files/<login>-uid-<n>/`. The daemon long-polls for them, copies each
   to `receiveDir` under a name that does not exist yet, and deletes it from
   the holding area.
+- The device list says how each peer is reached, from the peer's status:
+  a current direct address means direct, otherwise the relay region. The
+  "test" link runs a disco ping (`LocalClient.Ping`), which measures the path
+  WireGuard would use without sending IP traffic, and reports the latency.
+- Tests run on GitHub for every push (`.github/workflows/test.yml`), on
+  Linux and Windows. They do not build the payload.
 - Who may connect (`access.go`): with `allowFrom` set to `own`, the TCP
   handler and the UDP relays ask Tailscale who the sender is (WhoIs) and
   serve only nodes of the same user as the console, from the console's own

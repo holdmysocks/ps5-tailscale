@@ -27,10 +27,11 @@ The PS5 kernel has no tunnel device, so Tailscale cannot become a system-wide
 VPN here. It runs inside one process:
 
 - Games and PSN traffic do **not** go through Tailscale.
-- Other apps on the console cannot open connections to tailnet addresses
-  directly. They can through a *local forward* (see
-  [game streaming](#game-streaming-moonlight-to-sunshine) and
-  [configuration](#configuration)).
+- Apps and the browser on the console cannot open tailnet addresses, and the
+  console's own IP address does not change. They can reach a device on your
+  tailnet through an address on the console itself: see
+  [reaching a device from the PS5](#reaching-a-device-from-the-ps5) and
+  [game streaming](#game-streaming-moonlight-to-sunshine).
 - No subnet routing, Tailscale SSH or Funnel. Taildrop works for receiving
   files, not for sending them.
 - The console cannot use an exit node, and it does not offer itself as one.
@@ -175,8 +176,9 @@ has there, whatever version is in it, so your autoload entry keeps working.
 That is one more reason to give that copy a fixed name such as
 `tailscale.elf` and not the versioned name it was downloaded under.
 
-Releases up to 0.6.0 cannot install later ones from the page, because the
-release files were renamed after 0.6.0; update those by hand once.
+0.6.0 looks for a file named plain `tailscale.elf`, which 0.6.1 and 0.6.2 do
+not have; 0.7.0 carries it as well, so 0.6.0 can install 0.7.0 from the
+page.
 
 **Devices.** The list is grouped into your tailnet's devices and devices
 shared with you, and marks the ones that can be used as an exit node. It can
@@ -184,6 +186,12 @@ be searched (name, address, OS, tag, place) and limited to devices that are
 online. If your tailnet has a VPN add-on such as Mullvad, its exit servers
 are counted but kept out of the list until you tick **Show VPN exit
 servers**. Click an address to copy it.
+
+Under a device's name the page says how the console currently reaches it:
+**direct**, or **relayed** through one of Tailscale's relay servers, which is
+slower and worth knowing when a stream stutters. Devices with no recent
+traffic show nothing. **test** measures the connection there and then and
+shows the round-trip time; it also wakes a connection that was idle.
 
 **Key expiry.** The page shows when the console's Tailscale key expires. By
 default that is 180 days after logging in, and an expired key takes the
@@ -246,11 +254,26 @@ Notes:
   the cause was not established.
 - Tested with ProsperoLight.
 
-### Other apps on the console
+### Reaching a device from the PS5
 
-"Extra forwards" in the settings relay any localhost port to a tailnet host
-in the same way, TCP or UDP. One per line, for example
-`tcp 127.0.0.1:8096 my-nas:8096`.
+The PS5's browser and apps cannot open a tailnet address such as
+`100.64.0.4` or `my-nas`. To reach a service on one of your devices from the
+console:
+
+1. On the status page, under **Reach a device from this PS5**, press **Add a
+   device**. Enter the device (its tailnet name or address) and the port the
+   service uses, and press **Save**.
+2. The page shows the address to use on the PS5, for example
+   `127.0.0.1:8096`. Open that in the PS5's browser, or enter it in the app.
+
+Each line covers one port of one device, TCP or UDP. The port on the console
+is the same as on the device where that is possible; a port below 1024 gets
+8000 added (80 becomes 8080). Pages that redirect to their own name will not
+follow, and HTTPS sites complain about the certificate, because the browser
+sees `127.0.0.1`; plain HTTP services work best, and the tailnet encrypts
+the connection anyway.
+
+### Other apps on the console
 
 The daemon can also run an HTTP proxy that reaches tailnet hosts, for apps
 that have their own proxy setting. It is off unless you give it an address in
@@ -301,7 +324,7 @@ optional.
 | `httpProxyAddr` | Where the HTTP proxy listens. Empty, the default, is off. |
 | `controlURL` | A coordination server other than Tailscale's. File only. |
 | `sunshineHosts` | The Sunshine hosts and, where it is not 47989, their port. |
-| `forwards` | Extra local forwards: `proto` is `tcp` or `udp`, `listen` a localhost address, `target` a tailnet host and port. |
+| `forwards` | What "Reach a device from this PS5" sets up: `proto` is `tcp` or `udp`, `listen` the address on the console, `target` a tailnet device and port. |
 | `udpPorts` | The console's UDP ports reachable from the tailnet. Default `[9295, 9296, 9297, 9302]` (Remote Play). `[]` turns inbound UDP off. |
 | `blockedPorts` | Local TCP ports that are never exposed to the tailnet. |
 | `allowFrom` | `"own"` lets only devices logged in as the same user as the console connect; other users' devices and devices shared into the tailnet are turned away. Anything else is the default: every device your tailnet's access rules allow. If the console is tagged, `"own"` means the devices of its own tailnet. |
@@ -359,7 +382,12 @@ Left to do by hand:
   a public resolver (1.1.1.1, 8.8.8.8, 9.9.9.9). The log says which one it
   uses in a line starting with `DNS:`. If none answers, the console has no
   working internet connection for payloads. The DNS server set in the PS5's
-  network settings plays no part.
+  network settings plays no part. The status page shows the one in use under
+  "Name lookups".
+- **A stream or Remote Play stutters.** Look at the device in the list on the
+  status page and press **test**. "Relayed" means the two devices could not
+  connect directly and the traffic takes a detour; that is usually a router
+  or firewall on one side blocking UDP.
 - **"Not logged in" after logging in.** Press **Log in again** for a fresh
   link.
 - **Forgot the status page password.** Delete the `passwordHash` line from
@@ -411,7 +439,8 @@ HTTP proxy, adding and removing the home screen icon, the password from the
 LAN and the tailnet, changing settings from the page, both priority settings,
 the update check, installing an update from the page (rehearsed with a test
 release, including replacing a second copy of the payload), receiving files
-with Taildrop, limiting connections to your own devices (with the
+with Taildrop, reaching a device through a forward set up on the page, the
+connection test, limiting connections to your own devices (with the
 console's owner's devices only; a refusal has not been seen for real), a
 stay in rest mode, both a minute and nine and a half hours: the same process
 carried on and was back on the tailnet after waking.

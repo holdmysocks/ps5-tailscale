@@ -3,11 +3,13 @@ package main
 import (
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,6 +56,11 @@ type statusInfo struct {
 	// SunshineHosts and Forwards describe the local forwards.
 	SunshineHosts []sunshineInfo `json:"sunshineHosts"`
 	Forwards      []string       `json:"forwards"`
+	// UserForwards are the forwards the user set up, as opposed to the ones
+	// that belong to a Sunshine host.
+	UserForwards []forwardRule `json:"userForwards"`
+	// DNS says where the daemon looks names up.
+	DNS string `json:"dns,omitempty"`
 	// UDPPorts are the console's UDP ports reachable from the tailnet.
 	UDPPorts []uint16 `json:"udpPorts"`
 	Priority string   `json:"priority"`
@@ -114,6 +121,8 @@ func (d *daemon) webHandler() http.Handler {
 		"/api/quit":      d.handleQuit,
 		"/api/uninstall": d.handleUninstall,
 		"/api/sunshine":  d.handleSunshine,
+		"/api/forwards":  d.handleForwards,
+		"/api/pingpeer":  d.handlePingPeer,
 		"/api/update":    d.handleUpdate,
 	} {
 		mux.HandleFunc("POST "+path, d.protect(d.guard(h)))
@@ -202,6 +211,7 @@ func (d *daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if d.cfg.AllowFrom == accessOwn {
 		info.AllowFrom = accessOwn
 	}
+	info.UserForwards = append([]forwardRule{}, d.cfg.Forwards...)
 	for _, h := range d.cfg.SunshineHosts {
 		info.SunshineHosts = append(info.SunshineHosts, sunshineInfo{Host: h.Host, Port: h.basePort(), Address: h.clientAddress()})
 	}
@@ -210,6 +220,9 @@ func (d *daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 		info.CanUpdate = canInstall(d.latest)
 	}
 	info.Update = d.update
+	if d.dns != nil {
+		info.DNS = d.dns.describe()
+	}
 	info.PayloadPath = d.cfg.PayloadPath
 	d.mu.Unlock()
 	info.UDPPorts = []uint16{}
@@ -438,4 +451,90 @@ func (d *daemon) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	d.logf("update requested from the status page")
 	io.WriteString(w, "The update has started.\n")
+}
+
+// handleForwards replaces the user's local forwards: localhost ports on the
+// console that lead to a device on the tailnet.
+func (d *daemon) handleForwards(w http.ResponseWriter, r *http.Request) {
+	var rules []forwardRule
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&rules); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	for i := range rules {
+		rules[i].Proto = strings.ToLower(strings.TrimSpace(rules[i].Proto))
+		rules[i].Listen = strings.TrimSpace(rules[i].Listen)
+		rules[i].Target = strings.TrimSpace(rules[i].Target)
+	}
+	if err := validateForwards(rules); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if rule, err := d.checkForwardPorts(rules); err != nil {
+		// The page picks the port on the console by itself, so tell it
+		// which one to pick again.
+		w.Header().Set("X-Port-Taken", rule.Proto+" "+rule.Listen)
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	d.mu.Lock()
+	d.cfg.Forwards = rules
+	cfg := d.cfg
+	d.mu.Unlock()
+	if err := saveConfig(d.cfgPath, cfg); err != nil {
+		d.logf("saving config: %v", err)
+	}
+	d.logf("forwards set to %v", rules)
+	if err := d.fwd.set(d.localForwardRules()); err != nil {
+		// Typically a port on the console that is already in use.
+		http.Error(w, "saved, but not everything could be started: "+err.Error(), http.StatusConflict)
+		return
+	}
+	io.WriteString(w, "ok\n")
+}
+
+// checkForwardPorts refuses forwards whose port on the console already
+// belongs to something else. On the PS5 a listener on 127.0.0.1 can be opened
+// next to one on every address, and would then take the local connections
+// away from it: a forward on the status page's port would cut the console's
+// own browser off from the page.
+func (d *daemon) checkForwardPorts(rules []forwardRule) (forwardRule, error) {
+	d.mu.Lock()
+	webPort, proxyPort := d.webPort, d.proxyPort
+	sunshine := sunshineRules(d.cfg.SunshineHosts)
+	d.mu.Unlock()
+	running := map[forwardRule]bool{}
+	for _, r := range d.fwd.rules() {
+		running[r] = true
+	}
+	for _, r := range rules {
+		_, portStr, _ := net.SplitHostPort(r.Listen)
+		port, _ := strconv.Atoi(portStr)
+		if r.Proto == "tcp" && (uint16(port) == webPort || (proxyPort != 0 && uint16(port) == proxyPort)) {
+			return r, fmt.Errorf("port %d on the console is used by this page or the HTTP proxy", port)
+		}
+		for _, s := range sunshine {
+			_, sp, _ := net.SplitHostPort(s.Listen)
+			if s.Proto == r.Proto && sp == portStr {
+				return r, fmt.Errorf("%s port %d on the console is used by game streaming", r.Proto, port)
+			}
+		}
+		if r.Proto != "tcp" || running[r] {
+			continue // one of ours already, or UDP, which cannot be probed
+		}
+		taken := false
+		for other := range running {
+			if other.Proto == "tcp" && other.Listen == r.Listen {
+				taken = true // the same local port, pointed somewhere else: ours to reuse
+			}
+		}
+		if taken {
+			continue
+		}
+		if c, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", portStr), 500*time.Millisecond); err == nil {
+			c.Close()
+			return r, fmt.Errorf("port %d on the console is already in use by something else", port)
+		}
+	}
+	return forwardRule{}, nil
 }

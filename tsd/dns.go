@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -161,4 +162,30 @@ func dnsReplyOK(query, reply []byte) bool {
 	rcode := reply[3] & 0x0f
 	answers := binary.BigEndian.Uint16(reply[6:])
 	return isResponse && rcode == 0 && answers > 0
+}
+
+// describe says in words which server is in use, for the status page. It
+// does not probe.
+func (p *dnsPicker) describe() string {
+	p.mu.Lock()
+	server, working := p.server, p.working
+	p.mu.Unlock()
+	if server == "" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(server)
+	if err != nil {
+		host = server
+	}
+	if !working {
+		return "no server answers"
+	}
+	switch {
+	case server == dnsLocal:
+		return host + " (DNS payload on this console)"
+	case slices.Contains(dnsPublic, server):
+		return host + " (public resolver)"
+	default:
+		return host + " (router)"
+	}
 }
