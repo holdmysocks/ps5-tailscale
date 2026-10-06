@@ -273,6 +273,29 @@ follow, and HTTPS sites complain about the certificate, because the browser
 sees `127.0.0.1`; plain HTTP services work best, and the tailnet encrypts
 the connection anyway.
 
+**test** next to a line tries the connection the way the PS5 would make it
+and says what happened: the device answers, the device answered but nothing
+listens on that port, there is no answer (off, asleep or firewalled), or
+there is no device with that name. The game streaming hosts have the same
+link, which checks whether Sunshine answers.
+
+### Waking a PC at home
+
+A sleeping PC cannot be reached over Tailscale, because nothing on it is
+running. The console is on the same home network, though, and can send it a
+Wake-on-LAN packet:
+
+1. Under **Wake a device at home** on the status page, press **Add a
+   device**, give it a name and its network card's MAC address (on Windows,
+   the "Physical address" in `ipconfig /all`), and press **Save**.
+2. From wherever you are, open the status page over Tailscale and press
+   **Wake**. Give the PC half a minute, then connect to it.
+
+The PC needs Wake-on-LAN turned on, in its firmware setup and in the network
+card's settings, and it works most reliably over a cable. The console sends
+the packet to every device on its network; there is no reply, so the page
+cannot tell whether the PC heard it. Only devices in the list can be woken.
+
 ### Other apps on the console
 
 The daemon can also run an HTTP proxy that reaches tailnet hosts, for apps
@@ -329,6 +352,7 @@ optional.
 | `blockedPorts` | Local TCP ports that are never exposed to the tailnet. |
 | `allowFrom` | `"own"` lets only devices logged in as the same user as the console connect; other users' devices and devices shared into the tailnet are turned away. Anything else is the default: every device your tailnet's access rules allow. If the console is tagged, `"own"` means the devices of its own tailnet. |
 | `receiveDir` | Where files sent to the console with Taildrop are put. |
+| `wake` | Devices the status page can wake with Wake-on-LAN: a `name` and the network card's `mac` each. |
 | `payloadPath` | The copy of the payload that is started with the console, if there is one; best kept under a fixed name such as `tailscale.elf`. An update installed from the status page replaces its contents and leaves its name alone. Empty: none. |
 | `priority` | `"high"` lets the daemon compete with games for CPU time; anything else is the default, low. Applied when Tailscale starts. |
 | `checkUpdates` | Ask GitHub twice a day whether a newer release exists, to show it on the status page and announce it once on the console. Nothing is downloaded. |
@@ -393,9 +417,13 @@ Left to do by hand:
 - **Forgot the status page password.** Delete the `passwordHash` line from
   `/data/tailscale/config.json` and start Tailscale again, or use the page on
   the console itself, where no password is asked.
-- **Something else.** `http://<console>:8090/api/logs?full=1` is the daemon's
-  log and `/api/logs?debug=1` is Tailscale's detailed log. Please attach them
-  to bug reports, after checking them for anything you consider private.
+- **Something else.** Press **Download diagnostics** on the status page and
+  attach the file to your bug report. It holds the logs, the version, the
+  firmware and the settings. E-mail addresses, your tailnet's name, public IP
+  addresses, keys and the password are removed from it; device names and
+  tailnet addresses are not, so read it before posting. If the status page
+  never comes up, there is nothing to press: fetch
+  `/data/tailscale/launcher.log` over FTP instead.
 
 ## Security
 
@@ -440,7 +468,7 @@ LAN and the tailnet, changing settings from the page, both priority settings,
 the update check, installing an update from the page (rehearsed with a test
 release, including replacing a second copy of the payload), receiving files
 with Taildrop, reaching a device through a forward set up on the page, the
-connection test, limiting connections to your own devices (with the
+connection tests, the diagnostics file, limiting connections to your own devices (with the
 console's owner's devices only; a refusal has not been seen for real), a
 stay in rest mode, both a minute and nine and a half hours: the same process
 carried on and was back on the tailnet after waking.
@@ -448,8 +476,9 @@ carried on and was back on the tailnet after waking.
 Remote Play through the tailnet address works with Chiaki and with Asobi on
 iOS and Android.
 
-Not tested: switching between Wi-Fi and Ethernet while running, rest mode on
-Wi-Fi, the complete Uninstall
+Not tested: whether a PC actually wakes from the Wake button (the console
+reports sending the packets; no sleeping PC was at hand), switching between
+Wi-Fi and Ethernet while running, rest mode on Wi-Fi, the complete Uninstall
 on a console (its parts were tested separately), whether High priority
 improves Remote Play, a real Sunshine host on a non-default port, other
 firmware versions, coordination servers other than Tailscale's.

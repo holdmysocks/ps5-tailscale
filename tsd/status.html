@@ -58,6 +58,7 @@
     /* The device gets a line of its own; port, protocol and Remove share the next. */
     .fwd .hostrow { flex-wrap: wrap; }
     .fwd .hostrow .host { flex: 1 1 100%; }
+    #wakerows .host, #wakerows .mac { flex: 1 1 100%; }
   }
   .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
   button {
@@ -98,6 +99,11 @@
   .fwd .hostrow { margin-bottom: 4px; }
   .fwd .use { font-size: 14px; color: var(--muted); }
   button.link { border: 0; padding: 0; background: none; color: var(--accent); font-size: inherit; text-decoration: underline; cursor: pointer; }
+  ul.about { margin: 12px 0 0; padding-left: 20px; }
+  ul.about li { margin-bottom: 8px; }
+  .hostrow .mac { flex: 2; min-width: 0; font-family: ui-monospace, Consolas, monospace; font-size: 14px; }
+  .result { font-size: 14px; color: var(--muted); }
+  .result.good { color: var(--ok); } .result.bad { color: var(--bad); }
   .hidden { display: none; }
 </style>
 </head>
@@ -134,6 +140,21 @@
     <ul class="health hidden" id="health"></ul>
     <p class="health hidden" id="keywarn" style="padding-left: 0"></p>
     <p class="msg hidden" id="error"></p>
+  </section>
+
+  <section class="panel">
+    <details id="aboutbox">
+      <summary><span class="heading">What this does, and what it does not</span></summary>
+      <ul class="about">
+        <li><strong>Your other devices can reach this PS5</strong> at its Tailscale address, from anywhere: FTP, the
+          payload loader, Remote Play, anything that listens on the console.</li>
+        <li><strong>The PS5 can reach a device on your tailnet</strong> through an address on the console itself. Set
+          that up under "Reach a device from this PS5"; game streaming has its own panel.</li>
+        <li><strong>It is not a full VPN.</strong> Games, PSN and the PS5's browser keep using your normal internet
+          connection, the console's public IP address does not change, and the console cannot use an exit node. The
+          PS5 has no way to route its own traffic through Tailscale.</li>
+      </ul>
+    </details>
   </section>
 
   <section class="panel login hidden" id="login">
@@ -201,6 +222,22 @@
     <p class="hint">Port is Sunshine's own port setting; leave it empty for the default (47989). Two hosts need
       different ports.</p>
     <p class="note" id="sunshine-state" style="margin: 12px 0 0"></p>
+  </section>
+
+  <section class="panel hidden" id="wakepanel">
+    <h2>Wake a device at home</h2>
+    <p class="note">A sleeping PC cannot be reached over Tailscale, but this console is on the same home network and
+      can send it a Wake-on-LAN packet. Open this page from wherever you are, press Wake, wait half a minute, then
+      connect. The device needs Wake-on-LAN turned on, and a wired connection works best.</p>
+    <div id="wakerows"></div>
+    <div class="actions">
+      <button id="btn-addwake" class="small">Add a device</button>
+      <button id="btn-wakes">Save</button>
+    </div>
+    <p class="hint">The address is the network card's MAC address, such as <code>00:11:22:AA:BB:CC</code>. On Windows
+      it is the "Physical address" shown by <code>ipconfig /all</code>.</p>
+    <p class="okmsg hidden" id="wakeok"></p>
+    <p class="msg hidden" id="wakemsg"></p>
   </section>
 
   <section class="panel">
@@ -272,8 +309,12 @@
       <button id="btn-logout" class="danger">Log out</button>
       <button id="btn-quit" class="danger">Stop Tailscale</button>
       <button id="btn-uninstall" class="danger">Uninstall</button>
+      <button id="btn-diag">Download diagnostics</button>
       <button id="btn-lock" class="hidden">Lock this page</button>
     </div>
+    <p class="hint" style="margin-top: 10px">Diagnostics is one text file with the logs, version and settings, for
+      attaching to a bug report. E-mail addresses, your tailnet's name, public IP addresses and the password are
+      removed; device names are not. Read it before posting it.</p>
     <p class="okmsg hidden" id="actionok"></p>
     <p class="msg hidden" id="actionmsg"></p>
   </section>
@@ -367,9 +408,35 @@ function row(dl, name, value, mono) {
 // "Copied" confirmation is not wiped out mid-way.
 let shownFacts = '';
 
+// testTarget asks the daemon whether a device answers on a port, the way a
+// forward would reach it, and writes the outcome into el.
+async function testTarget(target, el) {
+  el.className = 'result'; el.textContent = 'testing…';
+  try {
+    const r = await api('/api/testtarget?target=' + encodeURIComponent(target), {method: 'POST'});
+    if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+    const t = await r.json();
+    el.className = 'result ' + (t.ok ? 'good' : 'bad');
+    el.textContent = t.ok ? 'answers (' + Math.round(t.ms) + ' ms)' : t.error;
+  } catch (e) {
+    el.className = 'result bad'; el.textContent = e.message === 'locked' ? '' : e.message;
+  }
+}
+
+// testLink is a small "test" link with room for its result next to it.
+function testLink(target, title) {
+  const span = document.createElement('span');
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'link'; b.textContent = 'test'; b.title = title;
+  const res = document.createElement('span');
+  b.onclick = () => testTarget(target(), res);
+  span.append(b, ' ', res);
+  return span;
+}
+
 function hostRow(host, port) {
   const div = document.createElement('div');
-  div.className = 'hostrow';
+  div.className = 'hostrow'; div.style.flexWrap = 'wrap';
   const h = document.createElement('input');
   h.type = 'text'; h.className = 'host'; h.placeholder = 'Device name or address'; h.value = host || '';
   h.setAttribute('list', 'peernames'); h.setAttribute('aria-label', 'Sunshine host'); h.autocomplete = 'off';
@@ -380,7 +447,14 @@ function hostRow(host, port) {
   x.type = 'button'; x.className = 'small'; x.textContent = 'Remove';
   x.onclick = () => { div.remove(); hostsDirty = true; };
   h.oninput = p.oninput = () => { hostsDirty = true; };
-  div.append(h, p, x);
+  // Whether Sunshine on that device answers: its web port is the one the
+  // Moonlight client talks to first.
+  const t = testLink(() => {
+    const name = h.value.trim();
+    return (name.includes(':') ? '[' + name + ']' : name) + ':' + (parseInt(p.value, 10) || 47989);
+  }, 'Check whether Sunshine on this device answers');
+  t.style.flex = '1 1 100%'; t.style.fontSize = '14px';
+  div.append(h, p, x, t);
   return div;
 }
 
@@ -502,8 +576,11 @@ function fwdRow(rule) {
   x.onclick = () => { wrap.remove(); fwdsDirty = true; };
   const use = document.createElement('div');
   use.className = 'use';
-  if (rule) { use.append('On the PS5 use '); use.append(copyable(rule.listen)); }
-  else use.textContent = 'The address to use on the PS5 appears here after saving.';
+  if (rule) {
+    use.append('On the PS5 use ', copyable(rule.listen));
+    // Only TCP can be tested: UDP has no "it answered".
+    if (rule.proto === 'tcp') use.append(' · ', testLink(() => rule.target, 'Check whether the device answers on that port'));
+  } else use.textContent = 'The address to use on the PS5 appears here after saving.';
   // Changing what a row points at keeps its address; changing the port or
   // protocol gives it a new one, so it stays easy to recognise.
   h.oninput = () => { fwdsDirty = true; };
@@ -631,6 +708,18 @@ async function refresh() {
   $('sunshine-state').textContent = s.sunshineHosts.length
     ? s.sunshineHosts.map(h => h.host + ': add ' + h.address + ' in Moonlight').join('. ') + '.'
     : 'No Sunshine host is forwarded.';
+
+  // Devices to wake.
+  $('wakepanel').classList.toggle('hidden', s.state !== 'Running' && !s.wake.length);
+  const wakeNow = JSON.stringify(s.wake);
+  if (!wakeDirty && wakeNow !== lastWake) {
+    lastWake = wakeNow;
+    $('wakerows').replaceChildren(...s.wake.map(wakeRow));
+  }
+
+  // Before the first login, say what to expect; afterwards the note stays
+  // folded away unless it was opened.
+  if (needLogin && !aboutShown) { aboutShown = true; $('aboutbox').open = true; }
 
   $('btn-lock').classList.toggle('hidden', !s.passwordSet);
 
@@ -766,6 +855,61 @@ $('btn-fwds').onclick = async () => {
   fwdsDirty = false; lastFwds = '';
   refresh();
 };
+
+// Devices to wake. A row can be woken once it has been saved.
+let wakeDirty = false;
+let lastWake = '';
+let aboutShown = false;
+function wakeRow(t) {
+  const div = document.createElement('div');
+  div.className = 'hostrow'; div.style.flexWrap = 'wrap';
+  const n = document.createElement('input');
+  n.type = 'text'; n.className = 'host'; n.placeholder = 'Name, for example gaming-pc'; n.value = t ? t.name : '';
+  n.setAttribute('list', 'peernames'); n.setAttribute('aria-label', 'Name'); n.autocomplete = 'off'; n.maxLength = 64;
+  const m = document.createElement('input');
+  m.type = 'text'; m.className = 'mac'; m.placeholder = '00:11:22:AA:BB:CC'; m.value = t ? t.mac : '';
+  m.setAttribute('aria-label', 'MAC address'); m.autocomplete = 'off'; m.spellcheck = false;
+  const w = document.createElement('button');
+  w.type = 'button'; w.textContent = 'Wake'; w.disabled = !t;
+  w.title = t ? 'Send the wake-up packet' : 'Save first';
+  w.onclick = async () => {
+    show('wakemsg', ''); show('wakeok', '');
+    try {
+      const r = await api('/api/wake?mac=' + encodeURIComponent(t.mac), {method: 'POST'});
+      const text = (await r.text()).trim();
+      if (!r.ok) throw new Error(text || r.statusText);
+      show('wakeok', text);
+    } catch (e) {
+      if (e.message !== 'locked') show('wakemsg', e.message);
+    }
+  };
+  const x = document.createElement('button');
+  x.type = 'button'; x.className = 'small'; x.textContent = 'Remove';
+  x.onclick = () => { div.remove(); wakeDirty = true; };
+  n.oninput = () => { wakeDirty = true; };
+  m.oninput = () => { wakeDirty = true; w.disabled = true; w.title = 'Save first'; };
+  div.append(n, m, w, x);
+  return div;
+}
+$('btn-addwake').onclick = () => { $('wakerows').append(wakeRow(null)); wakeDirty = true; };
+$('btn-wakes').onclick = async () => {
+  show('wakemsg', ''); show('wakeok', '');
+  const list = [...$('wakerows').children].map(d => ({name: d.querySelector('.host').value.trim(), mac: d.querySelector('.mac').value.trim()}))
+    .filter(t => t.name || t.mac);
+  try {
+    const r = await api('/api/wakelist', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(list)});
+    const text = (await r.text()).trim();
+    if (!r.ok) throw new Error(text || r.statusText);
+    show('wakeok', 'Saved.');
+    wakeDirty = false; lastWake = '';
+  } catch (e) {
+    if (e.message !== 'locked') show('wakemsg', e.message);
+  }
+  refresh();
+};
+
+// The diagnostics file is a plain download; the session cookie covers it.
+$('btn-diag').onclick = () => { location.href = '/api/diagnostics'; };
 
 // Game streaming hosts.
 $('btn-addhost').onclick = () => { $('hostrows').append(hostRow('', 0)); hostsDirty = true; };

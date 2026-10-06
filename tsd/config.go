@@ -53,6 +53,9 @@ type config struct {
 	PayloadPath string `json:"payloadPath,omitempty"`
 	// ReceiveDir is where files sent to the console with Taildrop end up.
 	ReceiveDir string `json:"receiveDir"`
+	// Wake lists devices on the console's home network that the status page
+	// can wake with a Wake-on-LAN packet.
+	Wake []wakeTarget `json:"wake,omitempty"`
 	// Priority is how the daemon competes for CPU time: "low" (the default)
 	// never takes time from a game, "high" shares the CPU with games on
 	// equal terms, which can make Remote Play smoother. Applied at start.

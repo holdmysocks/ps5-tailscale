@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -59,6 +60,8 @@ type statusInfo struct {
 	// UserForwards are the forwards the user set up, as opposed to the ones
 	// that belong to a Sunshine host.
 	UserForwards []forwardRule `json:"userForwards"`
+	// Wake lists the devices the page can wake.
+	Wake []wakeTarget `json:"wake"`
 	// DNS says where the daemon looks names up.
 	DNS string `json:"dns,omitempty"`
 	// UDPPorts are the console's UDP ports reachable from the tailnet.
@@ -114,16 +117,20 @@ func (d *daemon) webHandler() http.Handler {
 	mux.HandleFunc("GET /api/config", d.protect(d.handleGetConfig))
 	mux.HandleFunc("GET /api/files", d.protect(d.handleFiles))
 	mux.HandleFunc("GET /api/files/get", d.protect(d.handleFileGet))
+	mux.HandleFunc("GET /api/diagnostics", d.protect(d.handleDiagnostics))
 	for path, h := range map[string]http.HandlerFunc{
-		"/api/config":    d.handleSetConfig,
-		"/api/login":     d.handleLogin,
-		"/api/logout":    d.handleLogout,
-		"/api/quit":      d.handleQuit,
-		"/api/uninstall": d.handleUninstall,
-		"/api/sunshine":  d.handleSunshine,
-		"/api/forwards":  d.handleForwards,
-		"/api/pingpeer":  d.handlePingPeer,
-		"/api/update":    d.handleUpdate,
+		"/api/config":     d.handleSetConfig,
+		"/api/login":      d.handleLogin,
+		"/api/logout":     d.handleLogout,
+		"/api/quit":       d.handleQuit,
+		"/api/uninstall":  d.handleUninstall,
+		"/api/sunshine":   d.handleSunshine,
+		"/api/forwards":   d.handleForwards,
+		"/api/pingpeer":   d.handlePingPeer,
+		"/api/testtarget": d.handleTestTarget,
+		"/api/wakelist":   d.handleWakeList,
+		"/api/wake":       d.handleWake,
+		"/api/update":     d.handleUpdate,
 	} {
 		mux.HandleFunc("POST "+path, d.protect(d.guard(h)))
 	}
@@ -212,6 +219,7 @@ func (d *daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 		info.AllowFrom = accessOwn
 	}
 	info.UserForwards = append([]forwardRule{}, d.cfg.Forwards...)
+	info.Wake = append([]wakeTarget{}, d.cfg.Wake...)
 	for _, h := range d.cfg.SunshineHosts {
 		info.SunshineHosts = append(info.SunshineHosts, sunshineInfo{Host: h.Host, Port: h.basePort(), Address: h.clientAddress()})
 	}
@@ -537,4 +545,48 @@ func (d *daemon) checkForwardPorts(rules []forwardRule) (forwardRule, error) {
 		}
 	}
 	return forwardRule{}, nil
+}
+
+// handleTestTarget tries to open a TCP connection to a device and port on
+// the tailnet, the way a forward would, and says whether it answered. It
+// tells "the device is not reachable" apart from "nothing listens there".
+func (d *daemon) handleTestTarget(w http.ResponseWriter, r *http.Request) {
+	target := strings.TrimSpace(r.URL.Query().Get("target"))
+	host, port, err := net.SplitHostPort(target)
+	if err != nil || host == "" || !validHostName(host) || !validPort(port) {
+		http.Error(w, "the target must be a device and a port", http.StatusBadRequest)
+		return
+	}
+	if d.srv == nil || d.lc == nil {
+		http.Error(w, "Tailscale is not running yet", http.StatusServiceUnavailable)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	start := time.Now()
+	c, err := d.dialTailnet(ctx, "tcp", target)
+	took := time.Since(start)
+	out := map[string]any{"ok": err == nil, "ms": float64(took.Microseconds()) / 1000}
+	if err != nil {
+		out["error"] = describeDialError(err)
+	} else {
+		c.Close()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+// describeDialError puts a failed connection attempt into words a user can
+// act on.
+func describeDialError(err error) string {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "connection refused"), strings.Contains(msg, "connection was refused"):
+		return "the device answered, but nothing listens on that port"
+	case strings.Contains(msg, "deadline exceeded"), strings.Contains(msg, "timeout"), strings.Contains(msg, "timed out"):
+		return "no answer: the device is off, asleep, or a firewall on it blocks the port"
+	case strings.Contains(msg, "no such host"), strings.Contains(msg, "lookup"), strings.Contains(msg, "not found"):
+		return "there is no device with that name on your tailnet"
+	}
+	return msg
 }
