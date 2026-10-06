@@ -227,9 +227,11 @@
         </label>
         <label class="field">Payload file to keep up to date
           <input type="text" id="set-payloadpath" autocomplete="off" placeholder="None">
-          <span class="hint">Where the copy of <code>tailscale.elf</code> that starts with the console is kept, for
-            example <code>/data/pldmgr/payloads/Tailscale/tailscale.elf</code>. Installing an update from this
-            page then replaces that file too. Empty: only the running copy is updated, until the next restart.</span>
+          <span class="hint">Where the copy that starts with the console is kept, for example
+            <code>/data/pldmgr/payloads/Tailscale/tailscale.elf</code>. Installing an update from this page then
+            replaces that file too; it keeps its name, and your autoload entry keeps working. Give that copy a
+            fixed name such as <code>tailscale.elf</code>, without a version in it, so the name stays true.
+            Empty: only the running copy is updated, until the next restart.</span>
         </label>
         <label class="field">Status page address
           <input type="text" id="set-webaddr" autocomplete="off">

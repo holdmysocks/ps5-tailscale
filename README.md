@@ -87,8 +87,13 @@ To update, use the new file in place of the old one. Sending it while
 Tailscale is running replaces the running copy. The file name changes with
 every release, so **check your autoload settings after updating**: a payload
 manager or autoloader that still points at the old file starts the old
-version with the console, or nothing if you deleted it. Renaming the new file
-to the name your autoload entry uses avoids touching the entry.
+version with the console, or nothing if you deleted it.
+
+The easy way to avoid that: keep the copy your payload manager or autoloader
+starts under a fixed name without a version, such as `tailscale.elf`. When
+you update, save the new release over it under that same name, and the
+autoload entry never needs to change. The status page always shows which
+version is really running.
 
 ## Using it
 
@@ -166,7 +171,9 @@ autoload settings after updating**, or the old version is back after the
 next restart. To have that file replaced as well, put its path under
 **Payload file to keep up to date** in the settings, for example
 `/data/pldmgr/payloads/Tailscale/tailscale.elf`. The file keeps the name it
-has there, whatever version is in it.
+has there, whatever version is in it, so your autoload entry keeps working.
+That is one more reason to give that copy a fixed name such as
+`tailscale.elf` and not the versioned name it was downloaded under.
 
 Releases up to 0.6.0 cannot install later ones from the page, because the
 release files were renamed after 0.6.0; update those by hand once.
@@ -299,7 +306,7 @@ optional.
 | `blockedPorts` | Local TCP ports that are never exposed to the tailnet. |
 | `allowFrom` | `"own"` lets only devices logged in as the same user as the console connect; other users' devices and devices shared into the tailnet are turned away. Anything else is the default: every device your tailnet's access rules allow. If the console is tagged, `"own"` means the devices of its own tailnet. |
 | `receiveDir` | Where files sent to the console with Taildrop are put. |
-| `payloadPath` | The copy of `tailscale.elf` that is started with the console, if there is one. An update installed from the status page replaces it. Empty: none. |
+| `payloadPath` | The copy of the payload that is started with the console, if there is one; best kept under a fixed name such as `tailscale.elf`. An update installed from the status page replaces its contents and leaves its name alone. Empty: none. |
 | `priority` | `"high"` lets the daemon compete with games for CPU time; anything else is the default, low. Applied when Tailscale starts. |
 | `checkUpdates` | Ask GitHub twice a day whether a newer release exists, to show it on the status page and announce it once on the console. Nothing is downloaded. |
 | `verbose` | Put Tailscale's own log in the main log as well. |
