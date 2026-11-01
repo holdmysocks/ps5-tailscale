@@ -121,10 +121,11 @@ type forwarder struct {
 	active   []forwardRule
 	closers  []func()
 	tcpPorts map[uint16]bool
+	udpPorts map[uint16]bool
 }
 
 func newForwarder(dial dialFunc, logf func(string, ...any)) *forwarder {
-	return &forwarder{dial: dial, logf: logf, tcpPorts: map[uint16]bool{}}
+	return &forwarder{dial: dial, logf: logf, tcpPorts: map[uint16]bool{}, udpPorts: map[uint16]bool{}}
 }
 
 // set replaces the running forwards with rules. Rules that cannot be started
@@ -135,7 +136,7 @@ func (f *forwarder) set(rules []forwardRule) error {
 	for _, c := range f.closers {
 		c()
 	}
-	f.closers, f.active, f.tcpPorts = nil, nil, map[uint16]bool{}
+	f.closers, f.active, f.tcpPorts, f.udpPorts = nil, nil, map[uint16]bool{}, map[uint16]bool{}
 
 	var errs []error
 	for _, r := range rules {
@@ -174,6 +175,13 @@ func (f *forwarder) listensOnTCP(port uint16) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.tcpPorts[port]
+}
+
+// listensOnUDP reports whether a local forward owns the UDP port.
+func (f *forwarder) listensOnUDP(port uint16) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.udpPorts[port]
 }
 
 func (f *forwarder) startTCP(r forwardRule) (stop func(), err error) {
@@ -216,6 +224,11 @@ func (f *forwarder) startUDP(r forwardRule) (stop func(), err error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+	if _, p, err := net.SplitHostPort(r.Listen); err == nil {
+		if port, err := strconv.ParseUint(p, 10, 16); err == nil {
+			f.udpPorts[uint16(port)] = true
+		}
 	}
 	return relay.stop, nil
 }

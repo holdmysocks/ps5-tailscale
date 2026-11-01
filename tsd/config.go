@@ -43,8 +43,8 @@ type config struct {
 	// relayed to a host on the tailnet.
 	Forwards []forwardRule `json:"forwards,omitempty"`
 	// UDPPorts lists the console's UDP ports that are reachable from the
-	// tailnet. The default is what PS5 Remote Play uses. An empty list turns
-	// inbound UDP off.
+	// tailnet. The default covers PS5 Remote Play and a Sunshine host on the
+	// console. An empty list turns inbound UDP off.
 	UDPPorts []uint16 `json:"udpPorts"`
 	// BlockedPorts lists local TCP ports that are never exposed to the tailnet.
 	BlockedPorts []uint16 `json:"blockedPorts,omitempty"`
@@ -78,7 +78,7 @@ func defaultConfig() config {
 		Hostname:     "ps5",
 		WebAddr:      ":8090",
 		ReceiveDir:   defaultReceiveDir,
-		UDPPorts:     slices.Clone(remotePlayUDPPorts),
+		UDPPorts:     slices.Clone(defaultUDPPorts),
 		CheckUpdates: true,
 	}
 }

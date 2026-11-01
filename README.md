@@ -10,6 +10,9 @@ Puts a jailbroken PS5 on your [Tailscale](https://tailscale.com) network.
   your router.
 - **Stream games to the console over Tailscale.** A Moonlight client on the
   PS5 (such as ProsperoLight) can connect to a Sunshine host on your tailnet.
+- **Stream from the console with Moonlight.** A Sunshine host on the PS5
+  (such as [ProsperoSunshine](https://github.com/Darkatek7/ProsperoSunshine))
+  is reachable at the console's tailnet address.
 - **Home screen icon** that opens its status page.
 
 It runs the real Tailscale client code (v1.104.0) as a single payload.
@@ -108,7 +111,7 @@ want, for example FTP on 2121 or the payload loader on 9021.
 - Every TCP port that something on the console listens on is forwarded.
   Ports with no listener refuse the connection.
 - UDP ports have to be listed, under **Settings** on the status page. The
-  default list is Remote Play's.
+  default list is Remote Play's and that of a Sunshine host on the console.
 - To keep a TCP port off the tailnet, list it under "TCP ports never
   exposed" in the settings.
 
@@ -140,6 +143,26 @@ Notes:
 - Waking the console from rest mode does not work: nothing runs while it
   sleeps, so it is not on the tailnet then. Tailscale carries on by itself
   once the console is awake again.
+
+### Streaming from the console (ProsperoSunshine)
+
+[ProsperoSunshine](https://github.com/Darkatek7/ProsperoSunshine) is a
+Sunshine-compatible host that runs on the PS5. With it running, a Moonlight
+client on any of your Tailscale devices can add the console by its **tailnet
+address** and stream from it, from anywhere.
+
+How it works: Moonlight uses TCP 47984, 47989 and 48010, which are forwarded
+like any other TCP port, and UDP 47998 (video), 47999 (control) and 48000
+(audio), which are in the default UDP list.
+
+- **An older config keeps the list it was saved with.** If yours is only
+  `9295, 9296, 9297, 9302`, add `47998, 47999, 48000` under **Settings**.
+  Otherwise Moonlight pairs and lists the games, but the stream fails with
+  "control stream establishment failed" and UDP 47999.
+- A Sunshine host on the console and a [Sunshine host on the
+  tailnet](#game-streaming-moonlight-to-sunshine) on the same ports cannot run
+  at the same time. While a forward owns a UDP port, that port is kept off
+  the tailnet.
 
 ### Sending files to the console (Taildrop)
 
@@ -330,7 +353,7 @@ optional.
   "forwards": [
     {"proto": "tcp", "listen": "127.0.0.1:8096", "target": "my-nas:8096"}
   ],
-  "udpPorts": [9295, 9296, 9297, 9302],
+  "udpPorts": [9295, 9296, 9297, 9302, 47998, 47999, 48000],
   "blockedPorts": [],
   "allowFrom": "",
   "receiveDir": "/data/tailscale/received",
@@ -352,7 +375,7 @@ optional.
 | `acceptRoutes` | Use the subnet routes other devices advertise, like `tailscale up --accept-routes`, so a forward can reach a host on a network behind a subnet router (for example `192.168.1.20:8096`), not only tailnet devices. Off by default, as for Tailscale on Linux and FreeBSD. File only. Applied when Tailscale starts. |
 | `sunshineHosts` | The Sunshine hosts and, where it is not 47989, their port. |
 | `forwards` | What "Reach a device from this PS5" sets up: `proto` is `tcp` or `udp`, `listen` the address on the console, `target` a tailnet device (or, with `acceptRoutes`, a host behind a subnet router) and port. |
-| `udpPorts` | The console's UDP ports reachable from the tailnet. Default `[9295, 9296, 9297, 9302]` (Remote Play). `[]` turns inbound UDP off. |
+| `udpPorts` | The console's UDP ports reachable from the tailnet. Default `[9295, 9296, 9297, 9302, 47998, 47999, 48000]` (Remote Play, and a Sunshine host on the console). A port that a local forward owns is left out. `[]` turns inbound UDP off. |
 | `blockedPorts` | Local TCP ports that are never exposed to the tailnet. |
 | `allowFrom` | `"own"` lets only devices logged in as the same user as the console connect; other users' devices and devices shared into the tailnet are turned away. Anything else is the default: every device your tailnet's access rules allow. If the console is tagged, `"own"` means the devices of its own tailnet. |
 | `receiveDir` | Where files sent to the console with Taildrop are put. |

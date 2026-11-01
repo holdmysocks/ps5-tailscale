@@ -101,6 +101,9 @@ func TestLocalForward(t *testing.T) {
 	if !f.listensOnTCP(portNum) {
 		t.Errorf("listensOnTCP(%d) = false", portNum)
 	}
+	if !f.listensOnUDP(portNum) {
+		t.Errorf("listensOnUDP(%d) = false", portNum)
+	}
 
 	// TCP: data and the half-close go through.
 	c, err := net.Dial("tcp", listen)
@@ -140,6 +143,9 @@ func TestLocalForward(t *testing.T) {
 	// Replacing the rules frees the ports.
 	if err := f.set(nil); err != nil {
 		t.Fatal(err)
+	}
+	if f.listensOnTCP(portNum) || f.listensOnUDP(portNum) {
+		t.Errorf("port %d still counted as a forward's after it was removed", portNum)
 	}
 	if c, err := net.DialTimeout("tcp", listen, time.Second); err == nil {
 		c.Close()

@@ -14,13 +14,23 @@ import (
 // TCP needs no configuration, because tsnet asks about every incoming
 // connection and it can be passed to localhost on the spot. UDP has no such
 // hook, so the ports have to be listed and listened on, on the console's
-// tailnet addresses. The default list is what PS5 Remote Play uses.
+// tailnet addresses. The default list covers PS5 Remote Play and a Sunshine
+// host running on the console.
 
 // remotePlayUDPPorts are the UDP ports of the console's Remote Play service:
 // registration (9295), the stream (9296), the connection test (9297) and
 // discovery (9302). Its session port, TCP 9295, is covered by the TCP
 // forwarding.
 var remotePlayUDPPorts = []uint16{9295, 9296, 9297, 9302}
+
+// sunshineHostUDPPorts are the UDP ports of a Sunshine host running on the
+// console itself, such as ProsperoSunshine, on Sunshine's default port: video
+// (47998), control (47999) and audio (48000). Its TCP ports (47984, 47989 and
+// 48010) are covered by the TCP forwarding.
+var sunshineHostUDPPorts = []uint16{47998, 47999, 48000}
+
+// defaultUDPPorts is the list a new config starts with.
+var defaultUDPPorts = slices.Concat(remotePlayUDPPorts, sunshineHostUDPPorts)
 
 // udpExposer keeps a set of the console's UDP ports reachable on its tailnet
 // addresses.

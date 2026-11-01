@@ -38,8 +38,10 @@ way is a failure in the SDK's crt, which runs before any of this.
 - Inbound UDP (`inboundudp.go`): tsnet has no catch-all for UDP, so the ports
   in `udpPorts` are listened on with `tsnet.Server.ListenPacket` on the
   node's tailnet addresses and relayed to `127.0.0.1`. The default list is
-  PS5 Remote Play's (9295, 9296, 9297, 9302); its service answers clients
-  that arrive from loopback. Both UDP directions share `udprelay.go`: one
+  PS5 Remote Play's (9295, 9296, 9297, 9302), whose service answers clients
+  that arrive from loopback, and those of a Sunshine host on the console such
+  as ProsperoSunshine (47998, 47999, 48000). A port that a local forward owns
+  is left out, as for TCP. Both UDP directions share `udprelay.go`: one
   connection to the target per client address, dropped after two idle
   minutes.
 - Outbound: local forwards (`localforward.go`) listen on localhost and relay
