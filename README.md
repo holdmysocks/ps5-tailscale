@@ -487,6 +487,9 @@ on a console (its parts were tested separately), whether High priority
 improves Remote Play, a real Sunshine host on a non-default port, other
 firmware versions, coordination servers other than Tailscale's.
 
+`acceptRoutes` was contributed and tested by someone else, on a PS5 Slim on
+13.60 with Headscale; it has not been turned on on the console above.
+
 ## Building
 
 See [docs/BUILDING.md](docs/BUILDING.md). The build runs on Windows with

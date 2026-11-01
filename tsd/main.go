@@ -191,7 +191,10 @@ func (d *daemon) run() error {
 	if err != nil {
 		return fmt.Errorf("local client: %w", err)
 	}
-	if err := d.applyAcceptRoutes(context.Background()); err != nil {
+	routesCtx, cancelRoutes := context.WithTimeout(context.Background(), 10*time.Second)
+	err = d.applyAcceptRoutes(routesCtx)
+	cancelRoutes()
+	if err != nil {
 		d.logf("accept routes: %v", err)
 	}
 
