@@ -191,6 +191,9 @@ func (d *daemon) run() error {
 	if err != nil {
 		return fmt.Errorf("local client: %w", err)
 	}
+	if err := d.applyAcceptRoutes(context.Background()); err != nil {
+		d.logf("accept routes: %v", err)
+	}
 
 	if err := d.setProxy(d.cfg.HTTPProxyAddr); err != nil {
 		d.logf("http proxy: %v", err)
@@ -493,4 +496,17 @@ func lanIP() string {
 		return a.IP.String()
 	}
 	return "127.0.0.1"
+}
+
+// applyAcceptRoutes sets whether the console uses subnet routes. tsnet starts
+// from the platform's default, which is off on FreeBSD, at every start.
+func (d *daemon) applyAcceptRoutes(ctx context.Context) error {
+	_, err := d.lc.EditPrefs(ctx, &ipn.MaskedPrefs{
+		Prefs:       ipn.Prefs{RouteAll: d.cfg.AcceptRoutes},
+		RouteAllSet: true,
+	})
+	if err == nil && d.cfg.AcceptRoutes {
+		d.logf("using subnet routes (acceptRoutes)")
+	}
+	return err
 }

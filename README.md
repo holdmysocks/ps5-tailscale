@@ -32,8 +32,10 @@ VPN here. It runs inside one process:
   tailnet through an address on the console itself: see
   [reaching a device from the PS5](#reaching-a-device-from-the-ps5) and
   [game streaming](#game-streaming-moonlight-to-sunshine).
-- No subnet routing, Tailscale SSH or Funnel. Taildrop works for receiving
-  files, not for sending them.
+- The console does not act as a subnet router, and has no Tailscale SSH or
+  Funnel. It can use the subnet routes other devices advertise, with
+  `acceptRoutes` (off by default). Taildrop works for receiving files, not
+  for sending them.
 - The console cannot use an exit node, and it does not offer itself as one.
   Offering one is doable (it needs no tunnel device), but the PS5 would make
   a terrible exit node: every packet would pass through this one low-priority
@@ -320,6 +322,7 @@ optional.
   "passwordHash": "",
   "httpProxyAddr": "",
   "controlURL": "",
+  "acceptRoutes": false,
   "sunshineHosts": [
     {"host": "gaming-pc"},
     {"host": "office-pc", "port": 48989}
@@ -346,8 +349,9 @@ optional.
 | `passwordHash` | The status page's password, hashed. Set it on the status page; delete the field to remove a forgotten password. |
 | `httpProxyAddr` | Where the HTTP proxy listens. Empty, the default, is off. |
 | `controlURL` | A coordination server other than Tailscale's. File only. |
+| `acceptRoutes` | Use the subnet routes other devices advertise, like `tailscale up --accept-routes`, so a forward can reach a host on a network behind a subnet router (for example `192.168.1.20:8096`), not only tailnet devices. Off by default, as for Tailscale on Linux and FreeBSD. File only. Applied when Tailscale starts. |
 | `sunshineHosts` | The Sunshine hosts and, where it is not 47989, their port. |
-| `forwards` | What "Reach a device from this PS5" sets up: `proto` is `tcp` or `udp`, `listen` the address on the console, `target` a tailnet device and port. |
+| `forwards` | What "Reach a device from this PS5" sets up: `proto` is `tcp` or `udp`, `listen` the address on the console, `target` a tailnet device (or, with `acceptRoutes`, a host behind a subnet router) and port. |
 | `udpPorts` | The console's UDP ports reachable from the tailnet. Default `[9295, 9296, 9297, 9302]` (Remote Play). `[]` turns inbound UDP off. |
 | `blockedPorts` | Local TCP ports that are never exposed to the tailnet. |
 | `allowFrom` | `"own"` lets only devices logged in as the same user as the console connect; other users' devices and devices shared into the tailnet are turned away. Anything else is the default: every device your tailnet's access rules allow. If the console is tagged, `"own"` means the devices of its own tailnet. |
