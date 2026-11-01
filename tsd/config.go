@@ -26,6 +26,12 @@ type config struct {
 	HTTPProxyAddr string `json:"httpProxyAddr"`
 	// ControlURL selects a coordination server other than Tailscale's.
 	ControlURL string `json:"controlURL,omitempty"`
+	// AcceptRoutes makes the console use the subnet routes that other
+	// devices advertise, like tailscale up --accept-routes, so a local
+	// forward can reach a host on a network behind a subnet router, not only
+	// tailnet devices. Off by default, as on Linux and FreeBSD. Applied at
+	// start.
+	AcceptRoutes bool `json:"acceptRoutes,omitempty"`
 	// SunshineHosts are tailnet devices running Sunshine. Their streaming
 	// ports are forwarded from 127.0.0.1, so a Moonlight client on the
 	// console can use 127.0.0.1 as the host.
