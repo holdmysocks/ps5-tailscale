@@ -301,6 +301,11 @@ func (d *daemon) exposeUDP(ctx context.Context) {
 		running := d.state == "Running"
 		ports := slices.Clone(d.cfg.UDPPorts)
 		d.mu.Unlock()
+		// A port that a local forward owns stays off the tailnet, as for TCP
+		// (forward.go): relaying to it would let any tailnet device use the
+		// console to reach the forward's host. With the default list that
+		// happens when a Sunshine host is set up on Sunshine's default port.
+		ports = slices.DeleteFunc(ports, d.fwd.listensOnUDP)
 		if running {
 			var addrs []netip.Addr
 			v4, v6 := d.srv.TailscaleIPs()
