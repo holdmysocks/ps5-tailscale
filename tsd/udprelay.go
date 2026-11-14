@@ -7,6 +7,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -147,6 +148,17 @@ func (r *udpRelay) readLoop() {
 	}
 }
 
+// portUnreachable reports whether err is the target's ICMP port unreachable,
+// which a connected UDP socket returns from its next read or write. It is
+// not a reason to end the flow: the port may open a moment later. Moonlight
+// does exactly that with a Sunshine host, whose audio port opens a few RTSP
+// round trips after the first audio ping arrives. Ending the reply side there
+// left the flow up but nobody reading the replies, so the client never got
+// the sound.
+func portUnreachable(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED)
+}
+
 // serveFlow relays one client's datagrams to the target and the replies
 // back, until the flow goes quiet or the relay is stopped.
 func (r *udpRelay) serveFlow(key string, fl *udpFlow, client net.Addr) {
@@ -178,6 +190,9 @@ func (r *udpRelay) serveFlow(key string, fl *udpFlow, client net.Addr) {
 				if errors.As(err, &ne) && ne.Timeout() && !fl.idle() {
 					continue
 				}
+				if portUnreachable(err) && !fl.idle() {
+					continue
+				}
 				return
 			}
 			fl.touch()
@@ -192,7 +207,7 @@ func (r *udpRelay) serveFlow(key string, fl *udpFlow, client net.Addr) {
 	for {
 		select {
 		case b := <-fl.out:
-			if _, err := up.Write(b); err != nil {
+			if _, err := up.Write(b); err != nil && !portUnreachable(err) {
 				return
 			}
 		case <-idle.C:
