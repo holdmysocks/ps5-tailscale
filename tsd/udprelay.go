@@ -55,6 +55,8 @@ type udpRelay struct {
 	flows  map[string]*udpFlow
 
 	ended atomic.Bool // the read loop has returned
+
+	bufOnce sync.Once // growReadBuffer has logged its outcome
 }
 
 // startUDPRelay opens the listening socket and relays until stop is called.
@@ -159,6 +161,39 @@ func portUnreachable(err error) bool {
 	return errors.Is(err, syscall.ECONNREFUSED)
 }
 
+// udpReadBuffers are the receive buffer sizes asked for on a flow's socket to
+// the target, largest first. The kernel default (42080 bytes on FreeBSD)
+// holds only about 39 datagrams of a video stream: a Sunshine host sends a
+// large frame as one burst, and what doesn't fit while the relay forwards
+// the start of it is dropped on the console. 1 MiB stays under the share of
+// kern.ipc.maxsockbuf that FreeBSD allows a socket buffer; the smaller sizes
+// are for a kernel that refuses it.
+var udpReadBuffers = []int{1 << 20, 512 << 10, 256 << 10}
+
+// growReadBuffer enlarges the receive buffer of a flow's socket to the target
+// when that is a kernel socket (inbound UDP to a console service). It logs
+// the size it got, once per relay.
+func (r *udpRelay) growReadBuffer(up net.Conn) {
+	uc, ok := up.(*net.UDPConn)
+	if !ok {
+		return // a tailnet connection; its buffering is Tailscale's
+	}
+	got, last := 0, error(nil)
+	for _, size := range udpReadBuffers {
+		if last = uc.SetReadBuffer(size); last == nil {
+			got = size
+			break
+		}
+	}
+	r.bufOnce.Do(func() {
+		if got == 0 {
+			r.cfg.logf("%s: could not enlarge the receive buffer (%v); large bursts may drop", r.cfg.name, last)
+		} else {
+			r.cfg.logf("%s: receive buffer set to %d KiB", r.cfg.name, got>>10)
+		}
+	})
+}
+
 // serveFlow relays one client's datagrams to the target and the replies
 // back, until the flow goes quiet or the relay is stopped.
 func (r *udpRelay) serveFlow(key string, fl *udpFlow, client net.Addr) {
@@ -178,6 +213,7 @@ func (r *udpRelay) serveFlow(key string, fl *udpFlow, client net.Addr) {
 		return
 	}
 	defer up.Close()
+	r.growReadBuffer(up)
 
 	// Replies: target -> client.
 	go func() {
