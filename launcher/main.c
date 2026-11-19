@@ -24,6 +24,14 @@
 #define GO_MAXPROCS "4"
 #endif
 
+/* The name payload managers show for this process (ELF loaders name every
+ * payload "payload.elf"). The build passes the payload's file name. */
+#ifndef PROCESS_NAME
+#define PROCESS_NAME "tailscale.elf"
+#endif
+
+int sceKernelSetProcessName(const char *name);
+
 extern const uint8_t go_image[];
 extern const uint8_t go_image_end[];
 
@@ -143,6 +151,8 @@ int
 main(int argc, char **argv) {
   pid_t pid = getpid();
   intptr_t rootvnode;
+
+  sceKernelSetProcessName(PROCESS_NAME);
 
   /* Run as root outside the sandbox so /data and the network are reachable. */
   if ((rootvnode = kernel_get_root_vnode())) {

@@ -38,7 +38,7 @@ Push-Location (Join-Path $DevRoot $GoDir)
 try { Invoke-PS5Go @goArgs } finally { Pop-Location }
 
 $img = $bin -replace '\\', '/'
-$ccArgs = @('-O2', '-Wall', "-DGO_IMAGE=`"$img`"")
+$ccArgs = @('-O2', '-Wall', "-DGO_IMAGE=`"$img`"", "-DPROCESS_NAME=`"$Name.elf`"")
 if ($DebugLoader) { $ccArgs += '-DGOLOAD_DEBUG' }
 if ($Watchdog -gt 0) { $ccArgs += "-DGOLOAD_WATCHDOG=$Watchdog" }
 if ($MaxProcs) { $ccArgs += "-DGO_MAXPROCS=`"$MaxProcs`"" }
